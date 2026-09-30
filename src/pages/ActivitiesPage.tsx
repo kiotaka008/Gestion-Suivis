@@ -1,10 +1,8 @@
 import { useMemo, useState } from 'react';
-import { useNavigate } from 'react-router-dom';
-import { Plus, FolderKanban } from 'lucide-react';
+import { Plus, ClipboardList } from 'lucide-react';
 import { Container } from '../components/ui/Container';
 import { PageHeader } from '../components/ui/PageHeader';
 import { Button } from '../components/ui/Button';
-import { Avatar } from '../components/ui/Avatar';
 import { Badge } from '../components/ui/Badge';
 import { ProgressBar } from '../components/ui/ProgressBar';
 import { EmptyState } from '../components/ui/EmptyState';
@@ -17,35 +15,36 @@ import {
   TableHeader,
   TableRow,
 } from '../components/ui/Table';
-import { ProjectsFilters, type ViewMode } from '../components/projects/ProjectsFilters';
-import { ProjectCard } from '../components/projects/ProjectCard';
-import { CreateProjectModal } from '../components/projects/CreateProjectModal';
-import type { Project, ProjectStatus, Priority } from '../types/models';
+import { ActivitiesFilters, type ViewMode } from '../components/activities/ActivitiesFilters';
+import { ActivityCard } from '../components/activities/ActivityCard';
+import { CreateActivityModal } from '../components/activities/CreateActivityModal';
+import type { Activity, ActivityStatus, Priority } from '../types/models';
+import { mockActivities } from '../mocks/activities';
 import { mockProjects } from '../mocks/projects';
 
-function getStatusVariant(status: ProjectStatus) {
+function getStatusVariant(status: ActivityStatus) {
   switch (status) {
-    case 'completed':
+    case 'done':
       return 'success' as const;
-    case 'active':
+    case 'in_progress':
       return 'info' as const;
-    case 'on_hold':
-      return 'warning' as const;
+    case 'blocked':
+      return 'danger' as const;
     default:
       return 'muted' as const;
   }
 }
 
-function getStatusLabel(status: ProjectStatus) {
+function getStatusLabel(status: ActivityStatus) {
   switch (status) {
-    case 'completed':
+    case 'done':
       return 'Terminé';
-    case 'active':
+    case 'in_progress':
       return 'En cours';
-    case 'on_hold':
-      return 'En attente';
+    case 'blocked':
+      return 'Bloqué';
     default:
-      return 'Archivé';
+      return 'À faire';
   }
 }
 
@@ -62,37 +61,39 @@ function getPriorityLabel(priority: Priority) {
   }
 }
 
-export function ProjectsPage() {
-  const navigate = useNavigate();
-  const [projects, setProjects] = useState<Project[]>(mockProjects);
+export function ActivitiesPage() {
+  const [activities, setActivities] = useState<Activity[]>(mockActivities);
   const [search, setSearch] = useState('');
   const [status, setStatus] = useState('all');
   const [priority, setPriority] = useState('all');
+  const [projectId, setProjectId] = useState('all');
   const [sort, setSort] = useState('recent');
   const [view, setView] = useState<ViewMode>('table');
 
   const [isCreateOpen, setIsCreateOpen] = useState(false);
-  const [deleteTarget, setDeleteTarget] = useState<Project | null>(null);
+  const [deleteTarget, setDeleteTarget] = useState<Activity | null>(null);
   const [isDeleting, setIsDeleting] = useState(false);
 
   const filtered = useMemo(() => {
-    let result = [...projects];
+    let result = [...activities];
 
     if (search.trim()) {
       const q = search.toLowerCase();
       result = result.filter(
-        (p) =>
-          p.name.toLowerCase().includes(q) ||
-          p.description?.toLowerCase().includes(q)
+        (a) =>
+          a.title.toLowerCase().includes(q) ||
+          a.description?.toLowerCase().includes(q)
       );
     }
 
     if (status !== 'all') {
-      result = result.filter((p) => p.status === status);
+      result = result.filter((a) => a.status === status);
     }
-
     if (priority !== 'all') {
-      result = result.filter((p) => p.priority === priority);
+      result = result.filter((a) => a.priority === priority);
+    }
+    if (projectId !== 'all') {
+      result = result.filter((a) => a.projectId === projectId);
     }
 
     switch (sort) {
@@ -101,8 +102,8 @@ export function ProjectsPage() {
           (a, b) => new Date(a.createdAt).getTime() - new Date(b.createdAt).getTime()
         );
         break;
-      case 'name':
-        result.sort((a, b) => a.name.localeCompare(b.name));
+      case 'title':
+        result.sort((a, b) => a.title.localeCompare(b.title));
         break;
       case 'progress':
         result.sort((a, b) => b.progress - a.progress);
@@ -121,30 +122,32 @@ export function ProjectsPage() {
     }
 
     return result;
-  }, [projects, search, status, priority, sort]);
+  }, [activities, search, status, priority, projectId, sort]);
 
-  const handleCreate = (data: Partial<Project>) => {
-    const newProject: Project = {
-      id: `p-${Date.now()}`,
-      name: data.name ?? 'Sans titre',
+  const findProjectName = (id: string) =>
+    mockProjects.find((p) => p.id === id)?.name ?? 'Projet inconnu';
+
+  const handleCreate = (data: Partial<Activity>) => {
+    const newActivity: Activity = {
+      id: `a-${Date.now()}`,
+      title: data.title ?? 'Sans titre',
       description: data.description,
-      status: data.status ?? 'active',
+      projectId: data.projectId ?? mockProjects[0].id,
+      status: data.status ?? 'todo',
       priority: data.priority ?? 'medium',
       progress: 0,
-      ownerId: 'u-001',
-      memberIds: ['u-001'],
       dueDate: data.dueDate,
       createdAt: new Date().toISOString(),
       updatedAt: new Date().toISOString(),
     };
-    setProjects((prev) => [newProject, ...prev]);
+    setActivities((prev) => [newActivity, ...prev]);
   };
 
   const handleDeleteConfirm = async () => {
     if (!deleteTarget) return;
     setIsDeleting(true);
     await new Promise((r) => setTimeout(r, 400));
-    setProjects((prev) => prev.filter((p) => p.id !== deleteTarget.id));
+    setActivities((prev) => prev.filter((a) => a.id !== deleteTarget.id));
     setIsDeleting(false);
     setDeleteTarget(null);
   };
@@ -152,45 +155,48 @@ export function ProjectsPage() {
   return (
     <Container className="py-6">
       <PageHeader
-        title="Projets"
-        description="Gérez tous vos projets en un seul endroit."
+        title="Activités"
+        description="Toutes les activités de vos projets."
         actions={
           <Button
             leftIcon={<Plus className="h-4 w-4" />}
             onClick={() => setIsCreateOpen(true)}
           >
-            Nouveau projet
+            Nouvelle activité
           </Button>
         }
       />
 
       <div className="mt-6">
-        <ProjectsFilters
+        <ActivitiesFilters
           search={search}
           onSearchChange={setSearch}
           status={status}
           onStatusChange={setStatus}
           priority={priority}
           onPriorityChange={setPriority}
+          projectId={projectId}
+          onProjectChange={setProjectId}
           sort={sort}
           onSortChange={setSort}
           view={view}
           onViewChange={setView}
+          projects={mockProjects}
         />
       </div>
 
       <div className="mt-6">
         {filtered.length === 0 ? (
           <EmptyState
-            icon={<FolderKanban className="h-6 w-6" />}
-            title="Aucun projet trouvé"
-            description="Ajustez vos filtres ou créez un nouveau projet."
+            icon={<ClipboardList className="h-6 w-6" />}
+            title="Aucune activité trouvée"
+            description="Ajustez vos filtres ou créez une nouvelle activité."
             action={
               <Button
                 leftIcon={<Plus className="h-4 w-4" />}
                 onClick={() => setIsCreateOpen(true)}
               >
-                Créer un projet
+                Créer une activité
               </Button>
             }
           />
@@ -199,8 +205,8 @@ export function ProjectsPage() {
             <Table>
               <TableHead>
                 <TableRow>
+                  <TableHeader>Activité</TableHeader>
                   <TableHeader>Projet</TableHeader>
-                  <TableHeader>Responsable</TableHeader>
                   <TableHeader>Progression</TableHeader>
                   <TableHeader>Statut</TableHeader>
                   <TableHeader>Priorité</TableHeader>
@@ -208,58 +214,42 @@ export function ProjectsPage() {
                 </TableRow>
               </TableHead>
               <TableBody>
-                {filtered.map((project) => (
-                  <TableRow
-                    key={project.id}
-                    className="cursor-pointer"
-                    onClick={() => navigate(`/projects/${project.id}`)}
-                  >
+                {filtered.map((activity) => (
+                  <TableRow key={activity.id}>
                     <TableCell>
-                      <div className="min-w-0">
-                        <p className="font-medium text-foreground">{project.name}</p>
-                        {project.description && (
-                          <p className="truncate text-xs text-muted-foreground">
-                            {project.description}
-                          </p>
-                        )}
-                      </div>
+                      <p className="font-medium text-foreground">{activity.title}</p>
                     </TableCell>
-                    <TableCell>
-                      {project.owner && (
-                        <div className="flex items-center gap-2">
-                          <Avatar name={project.owner.name} size="sm" />
-                          <span className="text-sm">{project.owner.name}</span>
-                        </div>
-                      )}
+                    <TableCell className="text-sm text-muted-foreground">
+                      {findProjectName(activity.projectId)}
                     </TableCell>
                     <TableCell className="w-48">
                       <div className="flex items-center gap-2">
                         <ProgressBar
-                          value={project.progress}
+                          value={activity.progress}
                           variant={
-                            project.progress === 100
+                            activity.progress === 100
                               ? 'success'
-                              : project.progress < 40
+                              : activity.progress < 40
                               ? 'danger'
                               : 'default'
                           }
                         />
                         <span className="w-10 shrink-0 text-xs text-muted-foreground">
-                          {project.progress}%
+                          {activity.progress}%
                         </span>
                       </div>
                     </TableCell>
                     <TableCell>
-                      <Badge variant={getStatusVariant(project.status)}>
-                        {getStatusLabel(project.status)}
+                      <Badge variant={getStatusVariant(activity.status)}>
+                        {getStatusLabel(activity.status)}
                       </Badge>
                     </TableCell>
                     <TableCell>
-                      <Badge variant="muted">{getPriorityLabel(project.priority)}</Badge>
+                      <Badge variant="muted">{getPriorityLabel(activity.priority)}</Badge>
                     </TableCell>
                     <TableCell className="text-sm text-muted-foreground">
-                      {project.dueDate
-                        ? new Date(project.dueDate).toLocaleDateString('fr-FR', {
+                      {activity.dueDate
+                        ? new Date(activity.dueDate).toLocaleDateString('fr-FR', {
                             day: '2-digit',
                             month: 'short',
                             year: 'numeric',
@@ -273,30 +263,31 @@ export function ProjectsPage() {
           </div>
         ) : (
           <div className="grid gap-4 md:grid-cols-2 lg:grid-cols-3">
-            {filtered.map((project) => (
-              <ProjectCard
-                key={project.id}
-                project={project}
-                onView={(p) => navigate(`/projects/${p.id}`)}
-                onDelete={(p) => setDeleteTarget(p)}
+            {filtered.map((activity) => (
+              <ActivityCard
+                key={activity.id}
+                activity={activity}
+                projectName={findProjectName(activity.projectId)}
+                onDelete={(a) => setDeleteTarget(a)}
               />
             ))}
           </div>
         )}
       </div>
 
-      <CreateProjectModal
+      <CreateActivityModal
         isOpen={isCreateOpen}
         onClose={() => setIsCreateOpen(false)}
         onCreate={handleCreate}
+        projects={mockProjects}
       />
 
       <ConfirmDialog
         isOpen={!!deleteTarget}
         onClose={() => setDeleteTarget(null)}
         onConfirm={handleDeleteConfirm}
-        title="Supprimer le projet ?"
-        description={`Le projet "${deleteTarget?.name}" sera définitivement supprimé.`}
+        title="Supprimer l'activité ?"
+        description={`L'activité "${deleteTarget?.title}" sera définitivement supprimée.`}
         confirmLabel="Supprimer"
         isLoading={isDeleting}
       />

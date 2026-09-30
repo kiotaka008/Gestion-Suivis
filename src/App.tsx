@@ -6,15 +6,14 @@ import { LoginPage } from './pages/LoginPage';
 import { RegisterPage } from './pages/RegisterPage';
 import { DashboardPage } from './pages/DashboardPage';
 import { ProjectsPage } from './pages/ProjectsPage';
-import { Container } from './components/ui/Container';
-import { PageHeader } from './components/ui/PageHeader';
+import { ProjectDetailPage } from './pages/ProjectDetailPage';
+import { ActivitiesPage } from './pages/ActivitiesPage';
+import { UsersPage } from './pages/UsersPage';
+import { ReportsPage } from './pages/ReportsPage';
+import { NotificationsPage } from './pages/NotificationsPage';
+import { SettingsPage } from './pages/SettingsPage';
+import { AIAssistantPage } from './pages/AIAssistantPage';
 import { ROUTES } from './constants/routes';
-
-const Placeholder = ({ title }: { title: string }) => (
-  <Container>
-    <PageHeader title={title} description="Page en construction." />
-  </Container>
-);
 
 function App() {
   return (
@@ -30,12 +29,13 @@ function App() {
               <Route element={<DashboardLayout />}>
                 <Route path={ROUTES.DASHBOARD} element={<DashboardPage />} />
                 <Route path={ROUTES.PROJECTS} element={<ProjectsPage />} />
-                <Route path={ROUTES.ACTIVITIES} element={<Placeholder title="Activités" />} />
-                <Route path={ROUTES.USERS} element={<Placeholder title="Utilisateurs" />} />
-                <Route path={ROUTES.REPORTS} element={<Placeholder title="Rapports" />} />
-                <Route path={ROUTES.NOTIFICATIONS} element={<Placeholder title="Notifications" />} />
-                <Route path={ROUTES.SETTINGS} element={<Placeholder title="Paramètres" />} />
-                <Route path={ROUTES.AI_ASSISTANT} element={<Placeholder title="Assistant IA" />} />
+                <Route path={`${ROUTES.PROJECTS}/:id`} element={<ProjectDetailPage />} />
+                <Route path={ROUTES.ACTIVITIES} element={<ActivitiesPage />} />
+                <Route path={ROUTES.USERS} element={<UsersPage />} />
+                <Route path={ROUTES.REPORTS} element={<ReportsPage />} />
+                <Route path={ROUTES.NOTIFICATIONS} element={<NotificationsPage />} />
+                <Route path={ROUTES.SETTINGS} element={<SettingsPage />} />
+                <Route path={ROUTES.AI_ASSISTANT} element={<AIAssistantPage />} />
               </Route>
             </Route>
 

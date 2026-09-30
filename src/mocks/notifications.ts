@@ -1,0 +1,68 @@
+import type { Notification } from '../types/models';
+
+export const mockNotifications: Notification[] = [
+  {
+    id: 'n-001',
+    type: 'project',
+    title: 'Nouveau projet créé',
+    message: 'Rickael Brayan a créé le projet "Refonte du site web".',
+    isRead: false,
+    createdAt: '2025-09-28T08:30:00Z',
+  },
+  {
+    id: 'n-002',
+    type: 'activity',
+    title: 'Activité assignée',
+    message: 'Vous avez été assigné à "Configuration des buckets S3".',
+    isRead: false,
+    createdAt: '2025-09-28T07:15:00Z',
+  },
+  {
+    id: 'n-003',
+    type: 'comment',
+    title: 'Nouveau commentaire',
+    message: 'Tiavina Herinjaka a commenté "Application mobile".',
+    isRead: false,
+    createdAt: '2025-09-27T18:45:00Z',
+  },
+  {
+    id: 'n-004',
+    type: 'deadline',
+    title: 'Échéance proche',
+    message: 'Le projet "Migration cloud" arrive à échéance dans 3 jours.',
+    isRead: true,
+    createdAt: '2025-09-27T09:00:00Z',
+  },
+  {
+    id: 'n-005',
+    type: 'ai',
+    title: 'Analyse IA disponible',
+    message: 'Votre rapport hebdomadaire est prêt à être consulté.',
+    isRead: true,
+    createdAt: '2025-09-26T12:00:00Z',
+  },
+  {
+    id: 'n-006',
+    type: 'user',
+    title: 'Nouveau membre',
+    message: 'Miora Rakotoarisoa a rejoint votre organisation.',
+    isRead: true,
+    createdAt: '2025-09-25T14:20:00Z',
+  },
+  {
+    id: 'n-007',
+    type: 'activity',
+    title: 'Activité terminée',
+    message: 'Romeo Joseph a terminé "Design de l\'écran de login mobile".',
+    isRead: true,
+    createdAt: '2025-09-24T16:10:00Z',
+  },
+  {
+    id: 'n-008',
+    type: 'deadline',
+    title: 'Projet en retard',
+    message: 'Le projet "Refonte UX/UI" est en retard de 5 jours.',
+    isRead: false,
+    createdAt: '2025-09-23T11:00:00Z',
+  },
+];

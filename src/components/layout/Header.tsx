@@ -1,13 +1,20 @@
-import { Menu, Search, Bell, LogOut } from 'lucide-react';
+import { Menu, Search, Bell, LogOut, User as UserIcon, Settings as SettingsIcon } from 'lucide-react';
+import { useNavigate } from 'react-router-dom';
 import { ThemeToggle } from '../ui/ThemeToggle';
 import { Avatar } from '../ui/Avatar';
 import { Dropdown } from '../ui/Dropdown';
+import { ROUTES } from '../../constants/routes';
 
 interface HeaderProps {
   onMenuClick: () => void;
 }
 
 export function Header({ onMenuClick }: HeaderProps) {
+  const navigate = useNavigate();
+
+  // Nombre de notifications non lues (mock — sera branché au backend plus tard)
+  const unreadCount = 3;
+
   return (
     <header className="sticky top-0 z-30 flex h-16 items-center gap-4 border-b border-border bg-surface/95 px-4 backdrop-blur lg:px-6">
       <button
@@ -32,11 +39,16 @@ export function Header({ onMenuClick }: HeaderProps) {
         <ThemeToggle />
 
         <button
-          className="relative rounded-md p-2 text-muted-foreground hover:bg-muted"
-          aria-label="Notifications"
+          onClick={() => navigate(ROUTES.NOTIFICATIONS)}
+          className="relative rounded-md p-2 text-muted-foreground transition-colors hover:bg-muted hover:text-foreground"
+          aria-label={`Notifications${unreadCount > 0 ? ` (${unreadCount} non lues)` : ''}`}
         >
           <Bell className="h-5 w-5" />
-          <span className="absolute right-1.5 top-1.5 h-2 w-2 rounded-full bg-danger" />
+          {unreadCount > 0 && (
+            <span className="absolute right-1 top-1 flex h-4 min-w-4 items-center justify-center rounded-full bg-danger px-1 text-[10px] font-semibold text-white">
+              {unreadCount > 9 ? '9+' : unreadCount}
+            </span>
+          )}
         </button>
 
         <Dropdown
@@ -46,9 +58,25 @@ export function Header({ onMenuClick }: HeaderProps) {
             </button>
           }
           items={[
-            { label: 'Mon profil' },
-            { label: 'Paramètres' },
-            { label: 'Se déconnecter', icon: <LogOut className="h-4 w-4" />, variant: 'danger' },
+            {
+              label: 'Mon profil',
+              icon: <UserIcon className="h-4 w-4" />,
+              onClick: () => navigate(ROUTES.SETTINGS),
+            },
+            {
+              label: 'Paramètres',
+              icon: <SettingsIcon className="h-4 w-4" />,
+              onClick: () => navigate(ROUTES.SETTINGS),
+            },
+            {
+              label: 'Se déconnecter',
+              icon: <LogOut className="h-4 w-4" />,
+              variant: 'danger',
+              onClick: () => {
+                // TODO: brancher sur authService.logout() quand le backend sera prêt
+                navigate(ROUTES.LOGIN);
+              },
+            },
           ]}
         />
       </div>
