@@ -124,11 +124,17 @@ def build_analyze_risks_prompt(req: AnalyzeRisksRequest) -> str:
 
 
 def build_generate_report_prompt(req: GenerateReportRequest) -> str:
+    import json
+
     language_names = {"fr": "français", "en": "anglais", "mg": "malagasy"}
+
+    # Conversion propre du dict en JSON indenté
+    data_json = json.dumps(req.data, ensure_ascii=False, indent=2)
 
     return (
         f"Génère un rapport de type « {req.report_type} » en {language_names[req.language]}.\n\n"
-        f"Voici les données brutes :\n{req.data}\n\n"
+        f"Voici les données brutes au format JSON :\n"
+        f"```json\n{data_json}\n```\n\n"
         "Retourne ta réponse au format JSON suivant :\n"
         '{\n'
         '  "title": "titre du rapport",\n'
