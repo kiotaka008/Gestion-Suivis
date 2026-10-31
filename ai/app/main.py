@@ -8,6 +8,7 @@ from app.api.routes import (
     analyze,
     chat,
     classify,
+    conversations,
     extract,
     health,
     report,
@@ -75,6 +76,7 @@ def create_app() -> FastAPI:
     app.include_router(report.router)
     app.include_router(classify.router)
     app.include_router(extract.router)
+    app.include_router(conversations.router)
 
     return app
 
