@@ -354,6 +354,72 @@ ai/
 
 
 
+
+
+\---
+
+
+
+\## 🔗 Intégration avec le Backend Principal
+
+
+
+Ce service est appelé par le backend principal. Voici comment interagir avec lui.
+
+
+
+\### Configuration
+
+Le backend doit stocker :
+
+\- `AI\_SERVICE\_URL` : URL du service IA (ex: `http://localhost:8000`)
+
+\- `AI\_INTERNAL\_API\_KEY` : clé secrète partagée
+
+
+
+\### Authentification
+
+Toutes les requêtes vers `/api/ai/\*` doivent inclure :
+
+`X-Internal-API-Key: <votre-cle-secrete>`
+
+
+
+\### Gestion des conversations (Stateless)
+
+Le service IA ne stocke pas l'historique. C'est le backend qui doit :
+
+1\. Récupérer l'historique de SA base de données.
+
+2\. Envoyer l'historique complet dans `messages`.
+
+3\. Sauvegarder la réponse de l'IA dans SA base de données.
+
+
+
+\*\*Exemple :\*\*
+
+```json
+
+{
+
+&#x20; "user\_id": "user-123",
+
+&#x20; "messages": \[
+
+&#x20;   {"role": "user", "content": "Bonjour"},
+
+&#x20;   {"role": "assistant", "content": "Je suis un assistant IA..."},
+
+&#x20;   {"role": "user", "content": "Résume le projet"}
+
+&#x20; ]
+
+}
+
+
+
 \## Auteur
 
 
