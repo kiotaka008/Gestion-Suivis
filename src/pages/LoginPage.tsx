@@ -38,7 +38,7 @@ function AppLogo() {
         </svg>
       </div>
       <span className="text-lg font-bold text-white">
-        Project<span className="text-indigo-300">Manager</span>
+        E-<span className="text-indigo-300">prest</span>
       </span>
     </div>
   );
@@ -160,7 +160,7 @@ export function LoginPage() {
           </div>
 
           <div className="text-xs text-white/50">
-            © {new Date().getFullYear()} ProjectManager
+            © {new Date().getFullYear()} E-prest Project Manager
           </div>
         </div>
       </div>

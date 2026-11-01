@@ -1,7 +1,6 @@
 @import "tailwindcss";
 
 @theme {
-  /* Couleurs (thème clair par défaut) */
   --color-background: #f8fafc;
   --color-foreground: #0f172a;
   --color-surface: #ffffff;
@@ -17,41 +16,27 @@
   --color-muted: #f1f5f9;
   --color-muted-foreground: #64748b;
 
-  /* Rayons */
   --radius-sm: 0.25rem;
   --radius-md: 0.5rem;
   --radius-lg: 0.75rem;
 
-  /* Police */
   --font-sans: 'Inter', system-ui, sans-serif;
 }
 
-/* Dark mode piloté par la classe .dark sur <html> */
 @custom-variant dark (&:where(.dark, .dark *));
 
-/* Styles de base */
 @layer base {
-  * {
-    border-color: var(--color-border);
-  }
-
-  html,
-  body,
-  #root {
-    height: 100%;
-  }
-
+  * { border-color: var(--color-border); }
+  html, body, #root { height: 100%; }
   body {
     margin: 0;
     background-color: var(--color-background);
     color: var(--color-foreground);
     font-family: var(--font-sans);
     -webkit-font-smoothing: antialiased;
-    -moz-osx-font-smoothing: grayscale;
   }
 }
 
-/* Overrides du thème sombre */
 .dark {
   --color-background: #0f172a;
   --color-foreground: #f8fafc;

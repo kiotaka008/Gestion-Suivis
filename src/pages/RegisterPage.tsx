@@ -34,7 +34,7 @@ function AppLogo() {
         </svg>
       </div>
       <span className="text-lg font-bold text-white">
-        Project<span className="text-indigo-300">Manager</span>
+        E-<span className="text-indigo-300">prest</span>
       </span>
     </div>
   );
@@ -102,7 +102,6 @@ export function RegisterPage() {
 
   return (
     <div className="relative flex min-h-screen bg-[#0a0a1a]">
-      {/* COLONNE GAUCHE */}
       <div className="relative hidden flex-1 lg:block">
         <img src={arriere} alt="" className="absolute inset-0 h-full w-full object-cover" aria-hidden="true" />
         <div className="absolute inset-0 bg-gradient-to-r from-black/60 via-black/30 to-transparent" aria-hidden="true" />
@@ -163,12 +162,11 @@ export function RegisterPage() {
           </div>
 
           <div className="text-xs text-white/50">
-            © {new Date().getFullYear()} ProjectManager
+            © {new Date().getFullYear()} E-prest Project Manager
           </div>
         </div>
       </div>
 
-      {/* COLONNE DROITE */}
       <div className="flex w-full items-center justify-center bg-[#f5f5fa] p-6 lg:w-[560px] lg:p-12 dark:bg-slate-950">
         <div className="relative w-full max-w-md">
           <div className="absolute -left-3 top-0 h-16 w-1.5 rounded-full bg-gradient-to-b from-indigo-500 to-purple-500" />

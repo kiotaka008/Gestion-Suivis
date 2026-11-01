@@ -1,8 +1,9 @@
-import { useState } from 'react';
+import { useState, useEffect } from 'react';
 import { Container } from '../components/ui/Container';
 import { PageHeader } from '../components/ui/PageHeader';
 import { AIChat } from '../components/ai/AIChat';
 import { AIInsightsPanel } from '../components/ai/AIInsightsPanel';
+import { Spinner } from '../components/ui/Spinner';
 import {
   initialAIMessages,
   getMockAIResponse,
@@ -10,11 +11,19 @@ import {
 } from '../mocks/aiMessages';
 
 export function AIAssistantPage() {
-  const [messages, setMessages] = useState<AIMessageType[]>(initialAIMessages);
-  const [isLoading, setIsLoading] = useState(false);
+  const [messages, setMessages] = useState<AIMessageType[]>([]);
+  const [isLoading, setIsLoading] = useState(true);
+  const [isAiTyping, setIsAiTyping] = useState(false);
+
+  useEffect(() => {
+    const timer = setTimeout(() => {
+      setMessages(initialAIMessages);
+      setIsLoading(false);
+    }, 600);
+    return () => clearTimeout(timer);
+  }, []);
 
   const handleSend = async (content: string) => {
-    // Message utilisateur
     const userMessage: AIMessageType = {
       id: `m-${Date.now()}-u`,
       role: 'user',
@@ -23,9 +32,8 @@ export function AIAssistantPage() {
     };
 
     setMessages((prev) => [...prev, userMessage]);
-    setIsLoading(true);
+    setIsAiTyping(true);
 
-    // Simulation du délai de réponse
     await new Promise((r) => setTimeout(r, 1200));
 
     const aiMessage: AIMessageType = {
@@ -36,7 +44,7 @@ export function AIAssistantPage() {
     };
 
     setMessages((prev) => [...prev, aiMessage]);
-    setIsLoading(false);
+    setIsAiTyping(false);
   };
 
   return (
@@ -46,10 +54,19 @@ export function AIAssistantPage() {
         description="Posez vos questions et obtenez des analyses de vos projets."
       />
 
-      <div className="mt-6 grid gap-6 lg:grid-cols-[1fr_320px]">
-        <AIChat messages={messages} isLoading={isLoading} onSend={handleSend} />
-        <AIInsightsPanel onSelectQuestion={handleSend} />
-      </div>
+      {isLoading ? (
+        <div className="mt-6 flex h-[calc(100vh-220px)] items-center justify-center rounded-lg border border-border bg-background">
+          <div className="flex flex-col items-center gap-4">
+            <Spinner size="lg" />
+            <p className="text-sm text-muted-foreground">Initialisation de l'assistant...</p>
+          </div>
+        </div>
+      ) : (
+        <div className="mt-6 grid gap-6 lg:grid-cols-[1fr_320px]">
+          <AIChat messages={messages} isLoading={isAiTyping} onSend={handleSend} />
+          <AIInsightsPanel onSelectQuestion={handleSend} />
+        </div>
+      )}
     </Container>
   );
 }

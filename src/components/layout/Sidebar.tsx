@@ -37,8 +37,12 @@ export function Sidebar({ isOpen, onClose }: SidebarProps) {
       >
         <div className="flex h-16 items-center justify-between border-b border-border px-6">
           <div className="flex items-center gap-2">
-            <FolderKanban className="h-6 w-6 text-primary" />
-            <span className="text-base font-semibold text-foreground">ProjectManager</span>
+            <div className="flex h-8 w-8 items-center justify-center rounded-lg bg-gradient-to-br from-indigo-500 to-blue-600">
+              <FolderKanban className="h-4 w-4 text-white" />
+            </div>
+            <span className="text-base font-bold text-foreground">
+              E-<span className="text-primary">prest</span>
+            </span>
           </div>
           <button
             onClick={onClose}

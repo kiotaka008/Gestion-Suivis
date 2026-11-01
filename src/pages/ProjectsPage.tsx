@@ -1,4 +1,4 @@
-import { useMemo, useState } from 'react';
+import { useMemo, useState, useEffect } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { Plus, FolderKanban } from 'lucide-react';
 import { Container } from '../components/ui/Container';
@@ -20,6 +20,7 @@ import {
 import { ProjectsFilters, type ViewMode } from '../components/projects/ProjectsFilters';
 import { ProjectCard } from '../components/projects/ProjectCard';
 import { CreateProjectModal } from '../components/projects/CreateProjectModal';
+import { SkeletonTable } from '../components/ui/SkeletonTable';
 import type { Project, ProjectStatus, Priority } from '../types/models';
 import { mockProjects } from '../mocks/projects';
 
@@ -64,7 +65,9 @@ function getPriorityLabel(priority: Priority) {
 
 export function ProjectsPage() {
   const navigate = useNavigate();
-  const [projects, setProjects] = useState<Project[]>(mockProjects);
+  const [projects, setProjects] = useState<Project[]>([]);
+  const [isLoading, setIsLoading] = useState(true);
+
   const [search, setSearch] = useState('');
   const [status, setStatus] = useState('all');
   const [priority, setPriority] = useState('all');
@@ -74,6 +77,16 @@ export function ProjectsPage() {
   const [isCreateOpen, setIsCreateOpen] = useState(false);
   const [deleteTarget, setDeleteTarget] = useState<Project | null>(null);
   const [isDeleting, setIsDeleting] = useState(false);
+
+  // Simulation du chargement initial (à remplacer par l'appel API)
+  useEffect(() => {
+    const timer = setTimeout(() => {
+      setProjects(mockProjects);
+      setIsLoading(false);
+    }, 800); // Simule un délai de 800ms
+
+    return () => clearTimeout(timer);
+  }, []);
 
   const filtered = useMemo(() => {
     let result = [...projects];
@@ -180,7 +193,11 @@ export function ProjectsPage() {
       </div>
 
       <div className="mt-6">
-        {filtered.length === 0 ? (
+        {/* ÉTAT DE CHARGEMENT (SKELETON) */}
+        {isLoading ? (
+          <SkeletonTable rows={6} cols={6} />
+        ) : filtered.length === 0 ? (
+          /* ÉTAT VIDE */
           <EmptyState
             icon={<FolderKanban className="h-6 w-6" />}
             title="Aucun projet trouvé"
@@ -195,6 +212,7 @@ export function ProjectsPage() {
             }
           />
         ) : view === 'table' ? (
+          /* VUE TABLEAU */
           <div className="overflow-x-auto rounded-lg border border-border bg-surface">
             <Table>
               <TableHead>
@@ -272,6 +290,7 @@ export function ProjectsPage() {
             </Table>
           </div>
         ) : (
+          /* VUE CARTES */
           <div className="grid gap-4 md:grid-cols-2 lg:grid-cols-3">
             {filtered.map((project) => (
               <ProjectCard
