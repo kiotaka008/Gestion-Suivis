@@ -97,9 +97,19 @@ class LLMService:
         temperature: float | None = None,
         max_tokens: int | None = None,
     ) -> AsyncIterator[str]:
-        """Appel streaming au LLM Gemini (yield les chunks)."""
         settings = self._settings
-        
+
+        if settings.use_mock:
+            logger.info("MODE MOCK ACTIVÉ — Simulation de la réponse IA")
+            async for chunk in self._stream_complete_mock(
+                system_prompt=system_prompt,
+                messages=messages,
+                temperature=temperature,
+                max_tokens=max_tokens,
+            ):
+                yield chunk
+            return
+
         config_kwargs: dict[str, Any] = {
             "temperature": temperature if temperature is not None else settings.gemini_temperature,
             "max_output_tokens": max_tokens or settings.gemini_max_tokens,
@@ -127,6 +137,27 @@ class LLMService:
         except Exception as e:
             logger.error(f"Erreur streaming LLM : {type(e).__name__} — {e}")
             raise LLMError("Erreur lors du streaming LLM.")
+
+    async def _stream_complete_mock(
+        self,
+        *,
+        system_prompt: str,
+        messages: list[dict[str, str]],
+        temperature: float | None = None,
+        max_tokens: int | None = None,
+    ) -> AsyncIterator[str]:
+        import asyncio
+        reponse = (
+            "Voici les principaux risques d'un projet de refonte de site web :\n\n"
+            "1. Dépassement de budget : Les refontes dépassent souvent le budget initial de 20 à 30%.\n"
+            "2. Retard de livraison : La coordination entre design et développement peut prendre plus de temps que prévu.\n"
+            "3. Perte de trafic : Une mauvaise redirection d'URL peut impacter le référencement (SEO).\n"
+            "4. Résistance au changement : Les utilisateurs peuvent être perturbés par la nouvelle interface.\n"
+            "5. Problèmes de compatibilité : Le nouveau site doit fonctionner sur tous les navigateurs et appareils."
+        )
+        for mot in reponse.split(" "):
+            await asyncio.sleep(0.05)
+            yield mot + " "
 
     @staticmethod
     def _convert_messages(messages: list[dict[str, str]]) -> list[dict[str, Any]]:
