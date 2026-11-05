@@ -24,15 +24,15 @@ import java.util.UUID;
 
 /**
  * Notifications : création par les autres services (affectation, fin d'activité,
- * échéance, commentaire, ajout à un projet) et consultation par leur destinataire
+ * échéance, ajout à un projet) et consultation par leur destinataire
  * uniquement.
  */
 @Service
 @RequiredArgsConstructor
 public class NotificationService {
 
-    private static final int LONGUEUR_MAX_TITRE = 200;
-    private static final int LONGUEUR_MAX_MESSAGE = 1000;
+    private static final int LONGUEUR_MAX_TITRE = 255;
+    private static final int LONGUEUR_MAX_MESSAGE = 2000;
 
     private final NotificationRepository notifications;
     private final NotificationMapper mapper;
@@ -41,7 +41,7 @@ public class NotificationService {
     /** Crée une notification ; ignorée si le destinataire est absent, inactif ou l'auteur lui-même. */
     @Transactional
     public void notifier(Utilisateur destinataire, UUID auteurId, TypeNotification type, String titre,
-                         String message, UUID projetId, UUID activiteId) {
+                         String message) {
         if (destinataire == null || !destinataire.isActif()
                 || (auteurId != null && auteurId.equals(destinataire.getId()))) {
             return;
@@ -51,8 +51,6 @@ public class NotificationService {
         notification.setType(type);
         notification.setTitre(tronquer(titre, LONGUEUR_MAX_TITRE));
         notification.setMessage(tronquer(message, LONGUEUR_MAX_MESSAGE));
-        notification.setProjetId(projetId);
-        notification.setActiviteId(activiteId);
         notifications.save(notification);
     }
 

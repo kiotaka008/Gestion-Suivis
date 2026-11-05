@@ -3,9 +3,7 @@ package com.gestionsuivis.backend.controller;
 import com.gestionsuivis.backend.config.PaginationConfig;
 import com.gestionsuivis.backend.dto.PageResponse;
 import com.gestionsuivis.backend.dto.activite.ActiviteResponse;
-import com.gestionsuivis.backend.dto.activite.CommentaireResponse;
 import com.gestionsuivis.backend.dto.activite.CreerActiviteRequest;
-import com.gestionsuivis.backend.dto.activite.CreerCommentaireRequest;
 import com.gestionsuivis.backend.dto.activite.ModifierActiviteRequest;
 import com.gestionsuivis.backend.entity.Priorite;
 import com.gestionsuivis.backend.entity.StatutActivite;
@@ -30,8 +28,7 @@ import java.util.UUID;
 
 /**
  * Activités, aligné sur {@code src/services/activityService.ts} du frontend
- * ({@code GET/POST /activities}, {@code GET/PATCH/DELETE /activities/{id}}),
- * complété par les commentaires.
+ * ({@code GET/POST /activities}, {@code GET/PATCH/DELETE /activities/{id}}).
  */
 @RestController
 @RequestMapping("/api/activities")
@@ -77,19 +74,5 @@ public class ActiviteController {
     public ResponseEntity<Void> supprimer(@PathVariable UUID id) {
         service.supprimer(id);
         return ResponseEntity.noContent().build();
-    }
-
-    @GetMapping("/{id}/comments")
-    public PageResponse<CommentaireResponse> commentaires(
-            @PathVariable UUID id, @RequestParam(required = false) Integer page,
-            @RequestParam(required = false) Integer perPage) {
-        return service.listerCommentaires(id, PaginationConfig.creer(page, perPage, null, null, Map.of(),
-                Sort.by("dateCreation")));
-    }
-
-    @PostMapping("/{id}/comments")
-    public ResponseEntity<CommentaireResponse> commenter(@PathVariable UUID id,
-                                                         @Valid @RequestBody CreerCommentaireRequest requete) {
-        return ResponseEntity.status(HttpStatus.CREATED).body(service.commenter(id, requete));
     }
 }

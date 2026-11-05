@@ -14,12 +14,12 @@ import java.util.UUID;
  * Corps de {@code POST /api/projects}. Compatible avec {@code CreateProjectModal}
  * du frontend ({@code name, description, priority, dueDate, status, progress}) ;
  * {@code progress} est ignoré car calculé. Le chef de projet est par défaut
- * l'utilisateur connecté ; le département d'un MANAGER est imposé.
+ * l'utilisateur connecté.
  */
 @JsonIgnoreProperties(ignoreUnknown = true)
 public record CreerProjetRequest(
         @NotBlank(message = "Le nom du projet est obligatoire.")
-        @Size(max = 200, message = "Le nom ne doit pas dépasser 200 caractères.")
+        @Size(max = 255, message = "Le nom ne doit pas dépasser 255 caractères.")
         String name,
 
         @Size(max = 5000, message = "La description ne doit pas dépasser 5000 caractères.")
@@ -30,6 +30,5 @@ public record CreerProjetRequest(
         LocalDate startDate,
         LocalDate dueDate,
         UUID ownerId,
-        UUID departmentId,
         List<UUID> memberIds) {
 }

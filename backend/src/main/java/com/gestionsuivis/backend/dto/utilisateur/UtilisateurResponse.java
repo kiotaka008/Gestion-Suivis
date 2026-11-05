@@ -8,7 +8,7 @@ import java.util.UUID;
 
 /**
  * Utilisateur renvoyé par l'API, au format {@code User} du frontend
- * ({@code src/types/models.ts}), complété par le département et la bio.
+ * ({@code src/types/models.ts}), complété par l'organisation et la dernière connexion.
  * Ne contient jamais le mot de passe ni son hash.
  */
 public record UtilisateurResponse(
@@ -19,7 +19,6 @@ public record UtilisateurResponse(
         String avatarUrl,
         @JsonProperty("isActive") boolean isActive,
         Instant createdAt,
-        UUID departmentId,
-        String departmentName,
-        String bio) {
+        UUID organizationId,
+        Instant lastLoginAt) {
 }

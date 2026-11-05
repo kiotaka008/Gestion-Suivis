@@ -12,11 +12,11 @@ import java.util.UUID;
 /**
  * Corps de {@code PATCH /api/projects/{id}} ({@code Partial<Project>} du frontend).
  * Un champ absent ou {@code null} n'est pas modifié ; {@code memberIds}, s'il est
- * fourni, remplace la liste des membres.
+ * fourni, remplace la liste des membres (le chef de projet reste toujours membre).
  */
 @JsonIgnoreProperties(ignoreUnknown = true)
 public record ModifierProjetRequest(
-        @Size(min = 1, max = 200, message = "Le nom doit contenir entre 1 et 200 caractères.")
+        @Size(min = 1, max = 255, message = "Le nom doit contenir entre 1 et 255 caractères.")
         String name,
 
         @Size(max = 5000, message = "La description ne doit pas dépasser 5000 caractères.")
@@ -27,6 +27,5 @@ public record ModifierProjetRequest(
         LocalDate startDate,
         LocalDate dueDate,
         UUID ownerId,
-        UUID departmentId,
         List<UUID> memberIds) {
 }

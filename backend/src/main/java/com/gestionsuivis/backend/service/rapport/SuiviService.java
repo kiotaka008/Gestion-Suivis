@@ -16,7 +16,6 @@ import com.gestionsuivis.backend.repository.SpecificationsProjet;
 import com.gestionsuivis.backend.security.ControleAcces;
 import com.gestionsuivis.backend.security.UtilisateurCourant;
 import com.gestionsuivis.backend.security.UtilisateurConnecte;
-import com.gestionsuivis.backend.service.CalculAvancement;
 import lombok.RequiredArgsConstructor;
 import org.springframework.data.domain.Pageable;
 import org.springframework.data.jpa.domain.Specification;
@@ -47,12 +46,11 @@ public class SuiviService {
 
     private final ActiviteRepository activites;
     private final ProjetRepository projets;
-    private final CalculAvancement avancement;
     private final ControleAcces controle;
     private final UtilisateurCourant utilisateurCourant;
     private final Clock horloge;
 
-    /** Activités non terminées dont l'échéance est dépassée (ou au statut EN_RETARD). */
+    /** Activités non terminées dont l'échéance est dépassée. */
     @Transactional(readOnly = true)
     public PageResponse<TacheNonAccomplieResponse> tachesNonAccomplies(UUID projetId, UUID responsableId,
                                                                        Pageable pageable) {
@@ -103,13 +101,12 @@ public class SuiviService {
                     .toList();
         }
         List<UUID> ids = cibles.stream().map(Projet::getId).toList();
-        Map<UUID, Integer> avancements = avancement.parProjet(ids);
         Map<UUID, List<Activite>> activitesParProjet = ids.isEmpty() ? Map.of()
                 : activites.findAll(SpecificationsActivite.visiblesPar(u)
                         .and((racine, requete, cb) -> racine.get("projet").get("id").in(ids)))
                 .stream().collect(Collectors.groupingBy(a -> a.getProjet().getId()));
         return cibles.stream()
-                .map(p -> EvaluationRisque.evaluer(p, avancements.getOrDefault(p.getId(), 0),
+                .map(p -> EvaluationRisque.evaluer(p, p.getAvancement(),
                         activitesParProjet.getOrDefault(p.getId(), List.of()), aujourdHui))
                 .sorted(Comparator.comparingInt((IndicateurRisqueResponse r) -> rang(r.riskLevel())).reversed()
                         .thenComparing(IndicateurRisqueResponse::projectName, String.CASE_INSENSITIVE_ORDER))
@@ -132,7 +129,7 @@ public class SuiviService {
         return new TacheNonAccomplieResponse(a.getId(), a.getTitre(), a.getProjet().getId(), a.getProjet().getNom(),
                 responsable == null ? null : responsable.getId(), responsable == null ? null : responsable.getNom(),
                 a.getStatut(), a.getPriorite(), a.getAvancement(), a.getDateEcheance(), joursRetard, joursSansMaj,
-                a.getHeuresPrevues(), a.getHeuresReelles(), raison, a.getDateModification());
+                raison, a.getDateModification());
     }
 
     private static int rang(String niveau) {

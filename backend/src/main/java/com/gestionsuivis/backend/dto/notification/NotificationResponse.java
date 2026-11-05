@@ -8,8 +8,7 @@ import java.util.UUID;
 
 /**
  * Notification, au format {@code Notification} du frontend
- * ({@code id, type, title, message, isRead, createdAt}), complété par les liens
- * facultatifs vers le projet ou l'activité concernés.
+ * ({@code id, type, title, message, isRead, createdAt}).
  */
 public record NotificationResponse(
         UUID id,
@@ -17,7 +16,5 @@ public record NotificationResponse(
         String title,
         String message,
         @JsonProperty("isRead") boolean isRead,
-        Instant createdAt,
-        UUID projectId,
-        UUID activityId) {
+        Instant createdAt) {
 }

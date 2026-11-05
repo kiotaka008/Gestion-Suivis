@@ -18,8 +18,8 @@ public interface NotificationRepository extends JpaRepository<Notification, UUID
 
     Optional<Notification> findByIdAndDestinataireId(UUID id, UUID destinataireId);
 
-    boolean existsByDestinataireIdAndActiviteIdAndTypeAndDateCreationAfter(
-            UUID destinataireId, UUID activiteId, TypeNotification type, Instant apres);
+    boolean existsByDestinataireIdAndTypeAndMessageAndDateCreationAfter(
+            UUID destinataireId, TypeNotification type, String message, Instant apres);
 
     @Modifying
     @Query("update Notification n set n.lue = true where n.destinataire.id = :destinataire and n.lue = false")

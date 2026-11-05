@@ -8,7 +8,6 @@ import java.time.LocalDate;
 import java.util.Collection;
 import java.util.Comparator;
 import java.util.List;
-import java.util.Map;
 
 /**
  * Résumé textuel des données de suivi visibles par l'utilisateur, ajouté à sa
@@ -23,8 +22,8 @@ public final class ContexteIa {
     private ContexteIa() {
     }
 
-    public static String construire(String role, Collection<Projet> projets, Map<java.util.UUID, Integer> avancements,
-                                    Collection<Activite> activites, LocalDate aujourdHui) {
+    public static String construire(String role, Collection<Projet> projets, Collection<Activite> activites,
+                                    LocalDate aujourdHui) {
         Indicateurs indicateurs = Indicateurs.calculer(activites, aujourdHui);
         StringBuilder texte = new StringBuilder();
         texte.append("Contexte de suivi (données accessibles à l'utilisateur, rôle ").append(role)
@@ -45,7 +44,7 @@ public final class ContexteIa {
             texte.append("Projets en retard :\n");
             projetsEnRetard.forEach(p -> texte.append("  • ").append(p.getNom()).append(" — échéance ")
                     .append(p.getDateEcheance()).append(", avancement ")
-                    .append(avancements.getOrDefault(p.getId(), 0)).append(" %\n"));
+                    .append(p.getAvancement()).append(" %\n"));
         }
         List<Activite> activitesEnRetard = activites.stream().filter(a -> a.estEnRetard(aujourdHui))
                 .sorted(Comparator.comparing(Activite::getDateEcheance, Comparator.nullsLast(Comparator.naturalOrder())))

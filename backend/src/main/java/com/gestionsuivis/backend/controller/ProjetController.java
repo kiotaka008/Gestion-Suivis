@@ -52,12 +52,11 @@ public class ProjetController {
             @RequestParam(required = false) Integer page, @RequestParam(required = false) Integer perPage,
             @RequestParam(required = false) String sortBy, @RequestParam(required = false) String sortOrder,
             @RequestParam(required = false) String search, @RequestParam(required = false) String status,
-            @RequestParam(required = false) String priority, @RequestParam(required = false) UUID departmentId,
-            @RequestParam(required = false) UUID ownerId) {
+            @RequestParam(required = false) String priority, @RequestParam(required = false) UUID ownerId) {
         return service.lister(search,
                 ParametresRequete.enumeration(status, StatutProjet::depuisJson, "status"),
                 ParametresRequete.enumeration(priority, Priorite::depuisJson, "priority"),
-                departmentId, ownerId,
+                ownerId,
                 PaginationConfig.creer(page, perPage, sortBy, sortOrder, TRIS, Sort.by(Sort.Direction.DESC, "dateCreation")));
     }
 

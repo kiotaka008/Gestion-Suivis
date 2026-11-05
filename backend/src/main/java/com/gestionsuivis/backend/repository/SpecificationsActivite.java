@@ -1,7 +1,6 @@
 package com.gestionsuivis.backend.repository;
 
 import com.gestionsuivis.backend.entity.Activite;
-import com.gestionsuivis.backend.entity.Departement;
 import com.gestionsuivis.backend.entity.Priorite;
 import com.gestionsuivis.backend.entity.Projet;
 import com.gestionsuivis.backend.entity.StatutActivite;
@@ -19,6 +18,7 @@ import java.util.UUID;
 
 /**
  * Filtres des activités : périmètre de visibilité selon le rôle, puis critères de recherche.
+ * Le filtrage par organisation est appliqué en plus par Hibernate ({@code @TenantId}).
  */
 public final class SpecificationsActivite {
 
@@ -27,21 +27,21 @@ public final class SpecificationsActivite {
 
     /** Activités visibles (voir {@code ControleAcces}). */
     public static Specification<Activite> visiblesPar(UtilisateurConnecte u) {
-        if (u.estAdmin()) {
+        if (u.estAdmin() || u.estManager()) {
             return Specification.unrestricted();
         }
         return (racine, requete, cb) -> {
             Join<Activite, Projet> projet = racine.join("projet", JoinType.LEFT);
             Join<Activite, Utilisateur> responsable = racine.join("responsable", JoinType.LEFT);
-            List<Predicate> ou = new ArrayList<>();
-            ou.add(cb.equal(responsable.get("id"), u.id()));
-            ou.add(cb.equal(projet.get("chefDeProjet").get("id"), u.id()));
-            if (u.estManager() && u.departementId() != null) {
-                Join<Projet, Departement> departement = projet.join("departement", JoinType.LEFT);
-                ou.add(cb.equal(departement.get("id"), u.departementId()));
-            }
-            return cb.or(ou.toArray(Predicate[]::new));
+            return cb.or(cb.equal(responsable.get("id"), u.id()),
+                    cb.equal(projet.get("chefDeProjet").get("id"), u.id()));
         };
+    }
+
+    /** Activité en retard : non terminée et échéance dépassée. */
+    public static Specification<Activite> enRetard(LocalDate aujourdHui) {
+        return (racine, requete, cb) -> cb.and(cb.notEqual(racine.get("statut"), StatutActivite.TERMINE),
+                cb.isNotNull(racine.get("dateEcheance")), cb.lessThan(racine.get("dateEcheance"), aujourdHui));
     }
 
     public static Specification<Activite> filtres(String recherche, StatutActivite statut, Priorite priorite,
@@ -67,10 +67,7 @@ public final class SpecificationsActivite {
                 et.add(cb.equal(racine.get("responsable").get("id"), responsableId));
             }
             if (enRetard != null) {
-                Predicate retard = cb.and(cb.notEqual(racine.get("statut"), StatutActivite.TERMINE),
-                        cb.or(cb.equal(racine.get("statut"), StatutActivite.EN_RETARD),
-                                cb.and(cb.isNotNull(racine.get("dateEcheance")),
-                                        cb.lessThan(racine.get("dateEcheance"), aujourdHui))));
+                Predicate retard = enRetard(aujourdHui).toPredicate(racine, requete, cb);
                 et.add(enRetard ? retard : cb.not(retard));
             }
             return cb.and(et.toArray(Predicate[]::new));

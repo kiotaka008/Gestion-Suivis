@@ -13,8 +13,9 @@ import java.time.Clock;
 import java.time.Instant;
 
 /**
- * Émission des JWT signés en HS256. Le jeton ne contient que l'identifiant
- * (sujet), l'email et le rôle ; l'utilisateur est rechargé à chaque requête.
+ * Émission des JWT signés en HS256. Le jeton contient l'identifiant (sujet),
+ * l'organisation, l'email et le rôle ; l'utilisateur est rechargé à chaque requête
+ * dans son organisation.
  */
 @Service
 @RequiredArgsConstructor
@@ -23,6 +24,7 @@ public class JwtService {
     public static final String EMETTEUR = "gestion-suivis";
     public static final String CLAIM_ROLE = "role";
     public static final String CLAIM_EMAIL = "email";
+    public static final String CLAIM_ORGANISATION = "org";
 
     private final JwtEncoder encodeur;
     private final SecuriteProperties proprietes;
@@ -35,6 +37,7 @@ public class JwtService {
                 .subject(utilisateur.getId().toString())
                 .issuedAt(maintenant)
                 .expiresAt(maintenant.plus(proprietes.dureeJeton()))
+                .claim(CLAIM_ORGANISATION, utilisateur.getOrganisationId().toString())
                 .claim(CLAIM_EMAIL, utilisateur.getEmail())
                 .claim(CLAIM_ROLE, utilisateur.getRole().name())
                 .build();

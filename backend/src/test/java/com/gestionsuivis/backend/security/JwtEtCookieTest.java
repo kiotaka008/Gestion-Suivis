@@ -1,5 +1,6 @@
 package com.gestionsuivis.backend.security;
 
+import com.gestionsuivis.backend.config.ExecuteurOrganisation;
 import com.gestionsuivis.backend.entity.Role;
 import com.gestionsuivis.backend.entity.Utilisateur;
 import com.gestionsuivis.backend.repository.UtilisateurRepository;
@@ -14,12 +15,15 @@ import org.springframework.security.oauth2.jwt.Jwt;
 import org.springframework.security.oauth2.jwt.JwtDecoder;
 import org.springframework.security.oauth2.jwt.JwtException;
 import org.springframework.security.oauth2.server.resource.InvalidBearerTokenException;
+import org.springframework.transaction.PlatformTransactionManager;
 
 import java.time.Clock;
 import java.time.Duration;
 import java.time.Instant;
 import java.time.ZoneOffset;
 import java.util.Optional;
+import java.util.UUID;
+import java.util.concurrent.atomic.AtomicReference;
 
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
@@ -38,16 +42,17 @@ class JwtEtCookieTest {
     private final SecuriteProperties proprietes = SecuriteProperties.depuis(new MockEnvironment()
             .withProperty(SecuriteProperties.VAR_SECRET, SECRET));
     private final JwtDecoder decodeur = configuration.jwtDecoder(proprietes);
-    private final Utilisateur utilisateur = Donnees.utilisateur("Rickael", Role.MANAGER, Donnees.departement("IT"));
+    private final Utilisateur utilisateur = Donnees.utilisateur("Rickael", Role.MANAGER);
 
     @Test
-    void jetonEmis_estVerifieEtContientIdEtRole() {
+    void jetonEmis_estVerifieEtContientIdOrganisationEtRole() {
         String jeton = service(Clock.systemUTC()).generer(utilisateur);
 
         Jwt jwt = decodeur.decode(jeton);
 
         assertThat(jwt.getSubject()).isEqualTo(utilisateur.getId().toString());
         assertThat(jwt.getClaimAsString(JwtService.CLAIM_ROLE)).isEqualTo("MANAGER");
+        assertThat(jwt.getClaimAsString(JwtService.CLAIM_ORGANISATION)).isEqualTo(Donnees.ORGANISATION.toString());
         assertThat(jwt.getClaimAsString("iss")).isEqualTo(JwtService.EMETTEUR);
         assertThat(jwt.getExpiresAt()).isAfter(Instant.now().plus(Duration.ofMinutes(59)));
     }
@@ -127,13 +132,24 @@ class JwtEtCookieTest {
     @Test
     void convertisseur_rechargeLUtilisateurEtRefuseUnCompteDesactive() {
         UtilisateurRepository depot = mock(UtilisateurRepository.class);
-        ConvertisseurJwtUtilisateur convertisseur = new ConvertisseurJwtUtilisateur(depot);
+        ConvertisseurJwtUtilisateur convertisseur = new ConvertisseurJwtUtilisateur(depot,
+                new ExecuteurOrganisation(mock(PlatformTransactionManager.class)));
         Jwt jwt = decodeur.decode(service(Clock.systemUTC()).generer(utilisateur));
 
-        when(depot.findById(utilisateur.getId())).thenReturn(Optional.of(utilisateur));
+        AtomicReference<Optional<UUID>> organisationDeLecture = new AtomicReference<>();
+        when(depot.findById(utilisateur.getId())).thenAnswer(invocation -> {
+            organisationDeLecture.set(ContexteOrganisation.courante());
+            return Optional.of(utilisateur);
+        });
         AbstractAuthenticationToken authentification = convertisseur.convert(jwt);
+        // Le compte est rechargé dans l'organisation indiquée par le jeton.
+        assertThat(organisationDeLecture.get()).contains(Donnees.ORGANISATION);
         assertThat(authentification.getPrincipal()).isEqualTo(Donnees.connecte(utilisateur));
         assertThat(authentification.getAuthorities()).extracting(Object::toString).containsExactly("ROLE_MANAGER");
+
+        utilisateur.setOrganisationId(UUID.randomUUID());
+        assertThatThrownBy(() -> convertisseur.convert(jwt)).isInstanceOf(InvalidBearerTokenException.class);
+        utilisateur.setOrganisationId(Donnees.ORGANISATION);
 
         utilisateur.setActif(false);
         assertThatThrownBy(() -> convertisseur.convert(jwt)).isInstanceOf(InvalidBearerTokenException.class);

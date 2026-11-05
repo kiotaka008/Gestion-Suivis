@@ -1,18 +1,16 @@
 package com.gestionsuivis.backend.entity;
 
 import jakarta.persistence.Column;
+import jakarta.persistence.Convert;
 import jakarta.persistence.Entity;
-import jakarta.persistence.EnumType;
-import jakarta.persistence.Enumerated;
-import jakarta.persistence.FetchType;
 import jakarta.persistence.Id;
-import jakarta.persistence.JoinColumn;
-import jakarta.persistence.ManyToOne;
 import jakarta.persistence.Table;
 import lombok.Getter;
 import lombok.NoArgsConstructor;
 import lombok.Setter;
+import org.hibernate.annotations.ColumnTransformer;
 import org.hibernate.annotations.CreationTimestamp;
+import org.hibernate.annotations.TenantId;
 import org.hibernate.annotations.UpdateTimestamp;
 import org.hibernate.annotations.UuidGenerator;
 
@@ -20,10 +18,8 @@ import java.time.Instant;
 import java.util.UUID;
 
 /**
- * Utilisateur de l'application.
- * <p>
- * PROVISOIRE : noms de table et de colonnes supposés (schéma PostgreSQL non fourni).
- * Voir docs/HYPOTHESES_SCHEMA.md ; {@code ddl-auto=validate} signalera tout écart.
+ * Utilisateur : table {@code users} du schéma officiel. L'email est unique au sein
+ * d'une organisation ({@code users_org_email_unique}).
  */
 @Getter
 @Setter
@@ -37,31 +33,32 @@ public class Utilisateur {
     @Column(name = "id", nullable = false, updatable = false)
     private UUID id;
 
-    @Column(name = "email", nullable = false, unique = true, length = 255)
+    @TenantId
+    @Column(name = "organization_id", nullable = false, updatable = false)
+    private UUID organisationId;
+
+    @Column(name = "email", nullable = false, length = 255)
     private String email;
 
     @Column(name = "password_hash", nullable = false, length = 255)
     private String motDePasseHash;
 
-    @Column(name = "full_name", nullable = false, length = 150)
+    @Column(name = "name", nullable = false, length = 255)
     private String nom;
 
-    @Enumerated(EnumType.STRING)
-    @Column(name = "role", nullable = false, length = 20)
-    private Role role;
+    @Convert(converter = Role.Convertisseur.class)
+    @ColumnTransformer(read = "role::text", write = "?::user_role")
+    @Column(name = "role", nullable = false, columnDefinition = "user_role")
+    private Role role = Role.EMPLOYE;
+
+    @Column(name = "avatar_url", columnDefinition = "text")
+    private String avatarUrl;
 
     @Column(name = "is_active", nullable = false)
     private boolean actif = true;
 
-    @Column(name = "avatar_url", length = 500)
-    private String avatarUrl;
-
-    @Column(name = "bio", length = 1000)
-    private String bio;
-
-    @ManyToOne(fetch = FetchType.LAZY)
-    @JoinColumn(name = "department_id")
-    private Departement departement;
+    @Column(name = "last_login_at")
+    private Instant derniereConnexion;
 
     @CreationTimestamp
     @Column(name = "created_at", nullable = false, updatable = false)

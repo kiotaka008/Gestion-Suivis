@@ -49,9 +49,9 @@ public class UtilisateurController {
             @RequestParam(required = false) Integer page, @RequestParam(required = false) Integer perPage,
             @RequestParam(required = false) String sortBy, @RequestParam(required = false) String sortOrder,
             @RequestParam(required = false) String search, @RequestParam(required = false) String role,
-            @RequestParam(required = false) Boolean isActive, @RequestParam(required = false) UUID departmentId) {
+            @RequestParam(required = false) Boolean isActive) {
         return service.lister(search, ParametresRequete.enumeration(role, Role::depuisJson, "role"), isActive,
-                departmentId, PaginationConfig.creer(page, perPage, sortBy, sortOrder, TRIS, Sort.by("nom")));
+                PaginationConfig.creer(page, perPage, sortBy, sortOrder, TRIS, Sort.by("nom")));
     }
 
     @GetMapping("/me")

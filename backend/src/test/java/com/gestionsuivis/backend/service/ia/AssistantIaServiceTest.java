@@ -24,7 +24,6 @@ import com.gestionsuivis.backend.repository.ProjetRepository;
 import com.gestionsuivis.backend.repository.UtilisateurRepository;
 import com.gestionsuivis.backend.security.ControleAcces;
 import com.gestionsuivis.backend.security.UtilisateurCourant;
-import com.gestionsuivis.backend.service.CalculAvancement;
 import com.gestionsuivis.backend.service.rapport.BilanService;
 import com.gestionsuivis.backend.service.rapport.SuiviService;
 import com.gestionsuivis.backend.support.Donnees;
@@ -68,12 +67,12 @@ class AssistantIaServiceTest {
     private final ActiviteRepository activites = mock(ActiviteRepository.class);
     private final UtilisateurCourant courant = mock(UtilisateurCourant.class);
     private final AssistantIaService service = new AssistantIaService(client, conversations, messages, usages,
-            utilisateurs, projets, activites, new CalculAvancement(activites), new ControleAcces(projets, activites),
+            utilisateurs, projets, activites, new ControleAcces(projets, activites),
             courant, mock(SuiviService.class), mock(BilanService.class), new AssistantMapper(),
             JsonMapper.builder().build(), Clock.systemUTC(), mock(PlatformTransactionManager.class));
 
-    private final Utilisateur employe = Donnees.utilisateur("Employe", Role.EMPLOYE, null);
-    private final Utilisateur autre = Donnees.utilisateur("Autre", Role.EMPLOYE, null);
+    private final Utilisateur employe = Donnees.utilisateur("Employe", Role.EMPLOYE);
+    private final Utilisateur autre = Donnees.utilisateur("Autre", Role.EMPLOYE);
 
     @BeforeEach
     void initialiser() {
@@ -87,6 +86,12 @@ class AssistantIaServiceTest {
             return conversation;
         });
         when(messages.save(any())).thenAnswer(invocation -> {
+            MessageConversationIa message = invocation.getArgument(0);
+            message.setId(UUID.randomUUID());
+            message.setDateCreation(Instant.now());
+            return message;
+        });
+        when(messages.saveAndFlush(any())).thenAnswer(invocation -> {
             MessageConversationIa message = invocation.getArgument(0);
             message.setId(UUID.randomUUID());
             message.setDateCreation(Instant.now());
@@ -108,17 +113,24 @@ class AssistantIaServiceTest {
         assertThat(envoyee.getValue().identifiantUtilisateur()).isEqualTo(employe.getId().toString());
 
         ArgumentCaptor<MessageConversationIa> enregistres = ArgumentCaptor.forClass(MessageConversationIa.class);
-        verify(messages, times(2)).save(enregistres.capture());
+        verify(messages).save(enregistres.capture());
+        verify(messages).saveAndFlush(enregistres.capture());
         assertThat(enregistres.getAllValues().get(0).getRole()).isEqualTo(RoleMessageIa.USER);
         assertThat(enregistres.getAllValues().get(0).getContenu()).isEqualTo("Quels projets sont en retard ?");
+        assertThat(enregistres.getAllValues().get(0).getJetonsUtilises()).isEqualTo(10);
+        assertThat(enregistres.getAllValues().get(1).getRole()).isEqualTo(RoleMessageIa.ASSISTANT);
         assertThat(enregistres.getAllValues().get(1).getContenu()).isEqualTo("Deux projets sont en retard.");
+        assertThat(enregistres.getAllValues().get(1).getJetonsUtilises()).isEqualTo(5);
         assertThat(reponse.conversationId()).isNotNull();
         assertThat(reponse.message().role()).isEqualTo(RoleMessageIa.ASSISTANT);
 
         ArgumentCaptor<EvenementUsageIa> usage = ArgumentCaptor.forClass(EvenementUsageIa.class);
         verify(usages).save(usage.capture());
-        assertThat(usage.getValue().getJetonsTotal()).isEqualTo(15);
-        assertThat(usage.getValue().getOperation()).isEqualTo("chat");
+        assertThat(usage.getValue().getJetonsPrompt()).isEqualTo(10);
+        assertThat(usage.getValue().getJetonsReponse()).isEqualTo(5);
+        assertThat(usage.getValue().getEndpoint()).isEqualTo("/api/ai/chat");
+        assertThat(usage.getValue().getModele()).isEqualTo("gemini-test");
+        assertThat(usage.getValue().getStatut()).isEqualTo("success");
     }
 
     @Test

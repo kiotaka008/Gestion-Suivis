@@ -2,10 +2,7 @@ package com.gestionsuivis.backend.entity;
 
 import jakarta.persistence.Column;
 import jakarta.persistence.Entity;
-import jakarta.persistence.FetchType;
 import jakarta.persistence.Id;
-import jakarta.persistence.JoinColumn;
-import jakarta.persistence.ManyToOne;
 import jakarta.persistence.Table;
 import lombok.Getter;
 import lombok.NoArgsConstructor;
@@ -18,31 +15,26 @@ import java.time.Instant;
 import java.util.UUID;
 
 /**
- * Département de l'organisation, avec un responsable (MANAGER).
- * <p>
- * PROVISOIRE : structure supposée (schéma PostgreSQL non fourni).
+ * Organisation cliente (tenant) : table {@code organizations}. Toutes les autres
+ * données portent un {@code organization_id} ; la table n'est pas soumise au RLS.
  */
 @Getter
 @Setter
 @NoArgsConstructor
 @Entity
-@Table(name = "departments")
-public class Departement {
+@Table(name = "organizations")
+public class Organisation {
 
     @Id
     @UuidGenerator
     @Column(name = "id", nullable = false, updatable = false)
     private UUID id;
 
-    @Column(name = "name", nullable = false, unique = true, length = 150)
+    @Column(name = "name", nullable = false, length = 255)
     private String nom;
 
-    @Column(name = "description", length = 1000)
-    private String description;
-
-    @ManyToOne(fetch = FetchType.LAZY)
-    @JoinColumn(name = "manager_id")
-    private Utilisateur responsable;
+    @Column(name = "slug", nullable = false, unique = true, length = 100)
+    private String slug;
 
     @CreationTimestamp
     @Column(name = "created_at", nullable = false, updatable = false)

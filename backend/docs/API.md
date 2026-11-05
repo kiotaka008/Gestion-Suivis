@@ -9,7 +9,7 @@ Variables d'environnement (aucune n'est obligatoire pour démarrer, sauf la base
 
 | Variable | Rôle | Défaut |
 |---|---|---|
-| `DB_URL` | URL JDBC PostgreSQL | `jdbc:postgresql://localhost:5432/gestion_suivis` |
+| `DB_URL` | URL JDBC PostgreSQL (schéma officiel `ProjectManager_SaaS_Database`) | `jdbc:postgresql://localhost:5432/projectmanager` |
 | `DB_USERNAME` / `DB_PASSWORD` | identifiants PostgreSQL | `postgres` / vide |
 | `JWT_SECRET` | secret HMAC des JWT (32 octets min.) | aléatoire à chaque démarrage (sessions perdues) |
 | `JWT_EXPIRATION_MINUTES` | durée du jeton (5-1440) | 60 |
@@ -25,8 +25,14 @@ Variables d'environnement (aucune n'est obligatoire pour démarrer, sauf la base
 Ports de développement : React (Vite) 5173, Spring Boot 8080, FastAPI 8000, PostgreSQL 5432.
 Recommandé côté frontend : proxy Vite `'/api' → 'http://localhost:8080'` et `VITE_API_URL=/api`.
 
-Compte administrateur créé au premier démarrage s'il n'existe pas :
-`admin@gestion-suivis.com` / `Admin@2026` (rôle ADMIN, à changer immédiatement).
+Base de données : schéma officiel PostgreSQL 15+ (branche `develop`, dossier
+`ProjectManager_SaaS_Database`), voir [SCHEMA_BASE.md](SCHEMA_BASE.md). Le backend ne crée ni
+ne modifie aucune table (`ddl-auto=validate`).
+
+Sur une base **vide** (aucune organisation), le backend crée au démarrage l'organisation
+`gestion-suivis` et le compte `admin@gestion-suivis.com` / `Admin@2026` (rôle ADMIN, à changer
+immédiatement). Avec le jeu de données de développement, utiliser ses comptes
+(`rickael@company.com` / `password123`, etc.).
 
 ## 2. Conventions
 
@@ -34,13 +40,16 @@ Compte administrateur créé au premier démarrage s'il n'existe pas :
   posé par `POST /api/auth/login`. Pour les outils (Postman, curl) : en-tête `Authorization: Bearer <jeton>`.
 - **CSRF** (requêtes POST/PUT/PATCH/DELETE authentifiées par cookie) : renvoyer la valeur du cookie
   `XSRF-TOKEN` dans l'en-tête `X-XSRF-TOKEN` (comportement par défaut d'Axios ; sans proxy Vite,
-  ajouter `withXSRFToken: true`). Non exigé pour la connexion, l'inscription et les requêtes Bearer.
+  ajouter `withXSRFToken: true`). Non exigé pour la connexion, la déconnexion, l'inscription et les requêtes Bearer.
 - **JSON** : camelCase, noms identiques à `src/types/models.ts` ; identifiants UUID en texte ;
   dates-heures ISO-8601 UTC (`2025-01-10T09:00:00Z`) ; dates `YYYY-MM-DD`.
-- **Énumérations** (valeurs JSON) :
+- **Multi-organisation** : chaque utilisateur appartient à une organisation ; toutes les données
+  renvoyées sont limitées à son organisation (filtre Hibernate `@TenantId` + RLS PostgreSQL).
+  Une ressource d'une autre organisation répond 404.
+- **Énumérations** (valeurs JSON = valeurs des types ENUM PostgreSQL = frontend) :
   - rôles `admin`, `manager`, `member` (= EMPLOYE) ;
-  - projets `active`, `on_hold`, `completed`, `cancelled` (= ANNULE, valeur nouvelle) — `archived` refusé ;
-  - activités `todo`, `in_progress`, `done`, `overdue` (= EN_RETARD, valeur nouvelle) — `blocked` refusé ;
+  - projets `active`, `on_hold`, `completed`, `archived` ;
+  - activités `todo`, `in_progress`, `done`, `blocked` (le retard est calculé : `isOverdue`) ;
   - priorités `low`, `medium`, `high`, `urgent` ;
   - notifications `project`, `activity`, `comment`, `deadline`, `ai`, `user`.
 - **Pagination** : `?page=1&perPage=20&sortBy=dueDate&sortOrder=asc` (page à partir de 1, `perPage` ≤ 100).
@@ -54,7 +63,7 @@ Compte administrateur créé au premier démarrage s'il n'existe pas :
 | 401 | UNAUTHORIZED | non connecté, session expirée, compte désactivé, identifiants faux |
 | 403 | FORBIDDEN | rôle insuffisant, ressource d'un autre utilisateur, jeton CSRF absent |
 | 404 | NOT_FOUND | ressource inexistante |
-| 409 | CONFLICT | email déjà utilisé, département non vide, dernier administrateur… |
+| 409 | CONFLICT | email déjà utilisé dans l'organisation, retrait du chef de projet, dernier administrateur… |
 | 422 | VALIDATION_ERROR | champs invalides, valeur d'énumération refusée, incohérence (dates) |
 | 429 | RATE_LIMITED | limite du service IA (en-tête `Retry-After`) |
 | 502 / 503 | SERVER_ERROR | réponse IA inattendue / service IA indisponible |
@@ -71,9 +80,9 @@ Exemple 422 :
 
 | Rôle | Périmètre |
 |---|---|
-| ADMIN | toutes les données ; gestion des utilisateurs, départements, suppression des projets |
-| MANAGER | projets et activités de son département (création, modification, affectation), utilisateurs de son département |
-| EMPLOYE | ses activités (lecture ; mise à jour de `status`, `progress`, `actualHours`), projets dont il est membre ou chef |
+| ADMIN | toutes les données de l'organisation ; gestion des utilisateurs, changement de chef, suppression des projets |
+| MANAGER | consultation de tous les projets, activités et utilisateurs de l'organisation ; création de projets ; gestion des projets dont il est chef |
+| EMPLOYE | ses activités (lecture ; mise à jour de `status`, `progress`), projets dont il est membre, chef ou affecté |
 
 Un chef de projet gère son projet quel que soit son rôle. Toutes les vérifications sont faites
 dans les services ; un identifiant d'une ressource non autorisée donne 403
@@ -86,69 +95,56 @@ Légende frontend : **U** utilisé par React, **D** défini dans un service Reac
 ### Authentification — `/api/auth`
 | Méthode | URL | Corps | Réponse | Rôles | Front |
 |---|---|---|---|---|---|
-| POST | `/login` | `{ email, password }` | 200 `{ user }` + cookie ; 401 ; 422 | public | U |
+| POST | `/login` | `{ email, password, organization? }` | 200 `{ user }` + cookie ; 401 ; 422 (`organization` requis si l'email existe dans plusieurs organisations) | public | U |
 | POST | `/logout` | — | 204, cookie effacé | public | U |
 | GET | `/me` | — | 200 `User` ; 401 | connecté | U |
 | GET | `/csrf` | — | 204 + cookie `XSRF-TOKEN` | public | N |
 | POST | `/change-password` | `{ currentPassword, newPassword }` | 204 ; 422 | connecté | N |
-| POST | `/register` | `{ name, email, password }` | 201 `User` ; 403 si fermé ; 409 | public | N |
+| POST | `/register` | `{ name, email, password, organization? }` | 201 `User` ; 403 si fermé ; 409 ; 422 (`organization` requis s'il y en a plusieurs) | public | N |
 
 ### Utilisateurs — `/api/users`
 | Méthode | URL | Paramètres / corps | Réponse | Rôles | Front |
 |---|---|---|---|---|---|
-| GET | `/` | `page, perPage, sortBy (name, email, role, isActive, createdAt), sortOrder, search, role, isActive, departmentId` | `{ data: User[], meta }` | ADMIN, MANAGER (son département) | D |
+| GET | `/` | `page, perPage, sortBy (name, email, role, isActive, createdAt), sortOrder, search, role, isActive` | `{ data: User[], meta }` | ADMIN, MANAGER | D |
 | GET | `/me` | — | `User` | connecté | N |
-| PATCH | `/me` | `{ name?, email?, bio?, avatarUrl? }` | `User` | connecté | N |
-| GET | `/{id}` | — | `User` | ADMIN, MANAGER (département), soi-même | D |
-| POST | `/` | `{ name, email, role, password, departmentId?, isActive? }` | 201 `User` ; 409 | ADMIN | N |
-| PATCH | `/{id}` | `{ name?, email?, role?, departmentId?, avatarUrl?, bio? }` | `User` | ADMIN | D |
+| PATCH | `/me` | `{ name?, email?, avatarUrl? }` | `User` | connecté | N |
+| GET | `/{id}` | — | `User` | ADMIN, MANAGER, soi-même | D |
+| POST | `/` | `{ name, email, role, password, isActive? }` | 201 `User` ; 409 | ADMIN | N |
+| PATCH | `/{id}` | `{ name?, email?, role?, avatarUrl? }` | `User` | ADMIN | D |
 | POST | `/{id}/activate` | — | 204 | ADMIN | N |
 | POST | `/{id}/deactivate` | — | 204 ; 409 (soi-même, dernier admin) | ADMIN | D |
-| DELETE | `/{id}` | — | 204 ; 409 si lié à des données | ADMIN | N |
+| DELETE | `/{id}` | — | 204 ; 409 si chef de projet, affecté ou propriétaire de conversations | ADMIN | N |
 
-### Départements — `/api/departments`
-| Méthode | URL | Corps | Réponse | Rôles |
-|---|---|---|---|---|
-| GET | `/` | `page, perPage, sortBy (name, createdAt), search` | `{ data: Department[], meta }` | connecté |
-| GET | `/{id}` | — | `Department` | connecté |
-| POST | `/` | `{ name, description?, managerId? }` | 201 ; 409 | ADMIN |
-| PATCH | `/{id}` | `{ name?, description? }` | `Department` | ADMIN |
-| DELETE | `/{id}` | — | 204 ; 409 si non vide | ADMIN |
-| PUT | `/{id}/manager` | `{ userId }` (rôle manager) | `Department` ; 422 | ADMIN |
-| DELETE | `/{id}/manager` | — | `Department` | ADMIN |
-| GET | `/{id}/members` | `page, perPage` | `{ data: User[], meta }` | ADMIN, MANAGER du département |
-| POST | `/{id}/members` | `{ userId }` | 204 | ADMIN |
-| DELETE | `/{id}/members/{userId}` | — | 204 | ADMIN |
-
-`Department` : `{ id, name, description, managerId, managerName, memberCount, createdAt, updatedAt }`.
+`User` = type frontend + `organizationId`, `lastLoginAt`.
 
 ### Projets — `/api/projects`
 | Méthode | URL | Paramètres / corps | Réponse | Rôles | Front |
 |---|---|---|---|---|---|
-| GET | `/` | `page, perPage, sortBy (name, status, priority, startDate, dueDate, createdAt, updatedAt), sortOrder, search, status, priority, departmentId, ownerId` | `{ data: Project[], meta }` | connecté (périmètre) | D |
+| GET | `/` | `page, perPage, sortBy (name, status, priority, startDate, dueDate, createdAt, updatedAt), sortOrder, search, status, priority, ownerId` | `{ data: Project[], meta }` | connecté (périmètre) | D |
 | GET | `/{id}` | — | `Project` | périmètre | D |
-| POST | `/` | `{ name, description?, status?, priority?, startDate?, dueDate?, ownerId?, departmentId?, memberIds? }` | 201 `Project` | ADMIN, MANAGER | D |
-| PATCH | `/{id}` | mêmes champs, facultatifs | `Project` | ADMIN, MANAGER du département, chef de projet | D |
+| POST | `/` | `{ name, description?, status?, priority?, startDate?, dueDate?, ownerId?, memberIds? }` | 201 `Project` | ADMIN, MANAGER | D |
+| PATCH | `/{id}` | mêmes champs, facultatifs (`ownerId` : ADMIN seulement) | `Project` | ADMIN, chef de projet | D |
 | DELETE | `/{id}` | — | 204 | ADMIN | D |
 | POST | `/{id}/members` | `{ userId }` | `Project` | gestionnaires du projet | N |
-| DELETE | `/{id}/members/{userId}` | — | `Project` | gestionnaires du projet | N |
+| DELETE | `/{id}/members/{userId}` | — | `Project` ; 409 pour le chef | gestionnaires du projet | N |
 | GET | `/{id}/activities` | `page, perPage, sortBy, sortOrder, status, priority` | `{ data: Activity[], meta }` | périmètre | N |
 
-`Project` = type frontend + `departmentId`, `departmentName`, `isOverdue`. `progress` est calculé.
+`Project` = type frontend + `isOverdue`. Le chef de projet est membre (`project_members.role = owner`).
+`progress` (colonne `projects.progress`) est recalculé à chaque modification d'activité
+(moyenne des activités, une activité terminée = 100 %).
 
 ### Activités — `/api/activities`
 | Méthode | URL | Paramètres / corps | Réponse | Rôles | Front |
 |---|---|---|---|---|---|
 | GET | `/` | `page, perPage, sortBy (title, status, priority, progress, startDate, dueDate, createdAt, updatedAt), sortOrder, search, status, priority, projectId, assigneeId, overdue` | `{ data: Activity[], meta }` | périmètre | D |
 | GET | `/{id}` | — | `Activity` | gestionnaires, personne affectée | D |
-| POST | `/` | `{ title, projectId, description?, status?, priority?, assigneeId?, startDate?, dueDate?, plannedHours?, progress? }` | 201 `Activity` ; 409 projet clos | gestionnaires du projet | D |
-| PATCH | `/{id}` | mêmes champs + `actualHours` | `Activity` | gestionnaires ; personne affectée : `status, progress, actualHours` | D |
+| POST | `/` | `{ title, projectId, description?, status?, priority?, assigneeId?, startDate?, dueDate?, progress? }` | 201 `Activity` ; 409 projet clos | gestionnaires du projet | D |
+| PATCH | `/{id}` | mêmes champs | `Activity` | gestionnaires ; personne affectée : `status, progress` | D |
 | DELETE | `/{id}` | — | 204 | gestionnaires du projet | D |
-| GET | `/{id}/comments` | `page, perPage` | `{ data: Comment[], meta }` | qui voit l'activité | N |
-| POST | `/{id}/comments` | `{ content }` | 201 `Comment` | qui voit l'activité | N |
 
-`Activity` = type frontend + `projectName`, `startDate`, `plannedHours`, `actualHours`, `isOverdue`, `completedAt`.
-Passer `status` à `done` met `progress` à 100 et renseigne `completedAt`.
+`Activity` = type frontend + `projectName`, `startDate`, `isOverdue`, `completedAt`.
+Passer `status` à `done` met `progress` à 100. `completedAt` est approximatif (dernière
+modification d'une activité terminée : le schéma n'a pas de date d'achèvement).
 
 ### Notifications — `/api/notifications` (uniquement les siennes)
 | Méthode | URL | Paramètres | Réponse |
@@ -159,22 +155,20 @@ Passer `status` à `done` met `progress` à 100 et renseigne `completedAt`.
 | POST | `/read-all` | — | 204 |
 | DELETE | `/{id}` | — | 204 |
 
-Créées automatiquement : affectation d'activité, fin d'activité (chef de projet), commentaire,
-ajout à un projet ou à un département, et chaque jour à 7 h les rappels d'échéance (≤ 2 jours)
-et le passage en retard des activités échues.
+Créées automatiquement : affectation d'activité, fin d'activité (chef de projet), ajout à un
+projet, et chaque jour à 7 h (organisation par organisation) les rappels d'échéance (≤ 2 jours)
+et les alertes de retard des activités échues.
 
 ### Tableau de bord et bilans (calculés par le backend)
 | Méthode | URL | Paramètres | Réponse | Rôles |
 |---|---|---|---|---|
 | GET | `/api/dashboard/stats` | — | totaux, `monthlyEvolution`, `statusDistribution`, `tasksPerWeek`, `upcomingDeadlines`, `recentActivities` (formats de `mocks/dashboardStats.ts`) | connecté (périmètre) |
 | GET | `/api/reports/overview` | `period` ou `from` + `to` | `Bilan` | connecté (périmètre) |
-| GET | `/api/reports/users/{id}` | idem | `Bilan` | ADMIN, MANAGER (département), soi-même |
-| GET | `/api/reports/departments/{id}` | idem | `Bilan` | ADMIN, MANAGER du département |
+| GET | `/api/reports/users/{id}` | idem | `Bilan` | ADMIN, MANAGER, soi-même |
 | GET | `/api/reports/projects/{id}` | idem | `Bilan` | qui voit le projet |
 
 `period` : `week`, `month`, `year` (cahier des charges) ou `7d`, `30d`, `3m`, `6m`, `12m` (sélecteur du frontend) ; 30d par défaut.
-`Bilan` : `completionRate`, `overdueRate`, `plannedHours`, `actualHours`, `hoursVariance`, `hoursVarianceRate`,
-`averageCompletionDays`, compteurs, `monthlyEvolution`, `statusDistribution`, `priorityDistribution`, `projectsSummary`.
+`Bilan` : `completionRate`, `overdueRate`, `averageCompletionDays` (approximatif), compteurs, `monthlyEvolution`, `statusDistribution`, `priorityDistribution`, `projectsSummary`.
 
 ### Suivi pour le module IA — `/api/suivi` (mêmes permissions)
 | Méthode | URL | Paramètres | Réponse |
@@ -196,7 +190,8 @@ et le passage en retard des activités échues.
 
 Le backend ajoute à la question un résumé des seules données visibles par l'utilisateur
 (sans email ni nom de collègue), conserve l'historique (49 derniers messages renvoyés à
-FastAPI), trace la consommation de jetons, et ne refait jamais un appel en échec.
+FastAPI), trace la consommation de jetons (`ai_messages.tokens_used`, `ai_usage_events`),
+et ne refait jamais un appel en échec.
 
 ## 5. Exemples curl
 
@@ -224,6 +219,7 @@ curl -H "Authorization: Bearer <jeton>" http://localhost:8080/api/suivi/taches-n
 1. Proxy Vite `/api` → `http://localhost:8080` et `VITE_API_URL=/api` (sinon `withXSRFToken: true`).
 2. Afficher le `message` renvoyé par l'API (notamment « Email ou mot de passe incorrect. » au lieu de « session expirée »).
 3. Traiter le 400 (`BAD_REQUEST`) ; lire `errors[{ field, message }]` sur le 422 (déjà prévu).
-4. Remplacer `archived` / `blocked` ; accepter `cancelled` / `overdue`.
-5. Ajouter le mot de passe initial dans `CreateUserModal` ; `assigneeId`, `startDate`, `plannedHours` dans `CreateActivityModal`.
+4. Les statuts `archived` / `blocked` du frontend sont désormais acceptés (alignés sur la base).
+5. Ajouter le mot de passe initial dans `CreateUserModal` ; `assigneeId`, `startDate` dans `CreateActivityModal`.
 6. Brancher les pages sur l'API (au lieu de `src/mocks`) et activer `ProtectedRoute`.
+7. Si un même email existe dans plusieurs organisations, envoyer `organization` (slug) à la connexion.

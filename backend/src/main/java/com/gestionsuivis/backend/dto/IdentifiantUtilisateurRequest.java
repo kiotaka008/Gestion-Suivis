@@ -6,8 +6,7 @@ import jakarta.validation.constraints.NotNull;
 import java.util.UUID;
 
 /**
- * Corps {@code { "userId": "..." }} utilisé pour désigner un responsable de
- * département ou ajouter un membre à un département ou un projet.
+ * Corps {@code { "userId": "..." }} utilisé pour ajouter un membre à un projet.
  */
 @JsonIgnoreProperties(ignoreUnknown = true)
 public record IdentifiantUtilisateurRequest(

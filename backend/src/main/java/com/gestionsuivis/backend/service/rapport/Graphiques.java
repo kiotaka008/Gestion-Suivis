@@ -39,7 +39,7 @@ public final class Graphiques {
     }
 
     /**
-     * Répartition disjointe des projets : En cours, Terminés, En attente, En retard, Annulés
+     * Répartition disjointe des projets : En cours, Terminés, En attente, En retard, Archivés
      * (un projet en retard n'est compté que dans « En retard »).
      */
     public static Repartition statutsProjets(Collection<Projet> projets, LocalDate aujourdHui) {
@@ -47,7 +47,7 @@ public final class Graphiques {
         long termines = 0;
         long enAttente = 0;
         long enRetard = 0;
-        long annules = 0;
+        long archives = 0;
         for (Projet projet : projets) {
             if (projet.estEnRetard(aujourdHui)) {
                 enRetard++;
@@ -55,14 +55,14 @@ public final class Graphiques {
                 termines++;
             } else if (projet.getStatut() == StatutProjet.EN_ATTENTE) {
                 enAttente++;
-            } else if (projet.getStatut() == StatutProjet.ANNULE) {
-                annules++;
+            } else if (projet.getStatut() == StatutProjet.ARCHIVE) {
+                archives++;
             } else {
                 enCours++;
             }
         }
-        return new Repartition(List.of("En cours", "Terminés", "En attente", "En retard", "Annulés"),
-                List.of(enCours, termines, enAttente, enRetard, annules));
+        return new Repartition(List.of("En cours", "Terminés", "En attente", "En retard", "Archivés"),
+                List.of(enCours, termines, enAttente, enRetard, archives));
     }
 
     /** Répartition des activités par priorité : Urgent, Haute, Moyenne, Basse. */

@@ -15,8 +15,6 @@ public class NotificationMapper {
                 notification.getTitre(),
                 notification.getMessage(),
                 notification.isLue(),
-                notification.getDateCreation(),
-                notification.getProjetId(),
-                notification.getActiviteId());
+                notification.getDateCreation());
     }
 }

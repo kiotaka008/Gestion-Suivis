@@ -3,18 +3,18 @@ package com.gestionsuivis.backend.service;
 import com.gestionsuivis.backend.dto.projet.CreerProjetRequest;
 import com.gestionsuivis.backend.dto.projet.ModifierProjetRequest;
 import com.gestionsuivis.backend.dto.projet.ProjetResponse;
-import com.gestionsuivis.backend.entity.Departement;
+import com.gestionsuivis.backend.entity.Priorite;
 import com.gestionsuivis.backend.entity.Projet;
 import com.gestionsuivis.backend.entity.Role;
+import com.gestionsuivis.backend.entity.RoleMembreProjet;
 import com.gestionsuivis.backend.entity.StatutProjet;
 import com.gestionsuivis.backend.entity.Utilisateur;
 import com.gestionsuivis.backend.exception.AccesInterditException;
+import com.gestionsuivis.backend.exception.ConflitMetierException;
 import com.gestionsuivis.backend.exception.RequeteInvalideException;
 import com.gestionsuivis.backend.mapper.ProjetMapper;
 import com.gestionsuivis.backend.mapper.UtilisateurMapper;
 import com.gestionsuivis.backend.repository.ActiviteRepository;
-import com.gestionsuivis.backend.repository.CommentaireRepository;
-import com.gestionsuivis.backend.repository.DepartementRepository;
 import com.gestionsuivis.backend.repository.ProjetRepository;
 import com.gestionsuivis.backend.repository.UtilisateurRepository;
 import com.gestionsuivis.backend.security.ControleAcces;
@@ -27,6 +27,7 @@ import java.time.Clock;
 import java.time.LocalDate;
 import java.util.List;
 import java.util.Optional;
+import java.util.UUID;
 
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
@@ -36,37 +37,36 @@ import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 
-/** Règles métier des projets (création, département imposé, chef, dates), avec Mockito. */
+/** Règles métier des projets (création, chef et membres, dates), avec Mockito. */
 class ProjetServiceTest {
 
     private final ProjetRepository projets = mock(ProjetRepository.class);
     private final ActiviteRepository activites = mock(ActiviteRepository.class);
     private final UtilisateurRepository utilisateurs = mock(UtilisateurRepository.class);
-    private final DepartementRepository departements = mock(DepartementRepository.class);
     private final UtilisateurCourant courant = mock(UtilisateurCourant.class);
     private final NotificationService notifications = mock(NotificationService.class);
-    private final ProjetService service = new ProjetService(projets, activites, mock(CommentaireRepository.class),
-            utilisateurs, departements, new ProjetMapper(new UtilisateurMapper()), new CalculAvancement(activites),
-            new ControleAcces(projets, activites), courant, notifications, Clock.systemUTC());
+    private final ProjetService service = new ProjetService(projets, activites, utilisateurs,
+            new ProjetMapper(new UtilisateurMapper()), new ControleAcces(projets, activites), courant, notifications,
+            mock(AuditService.class), Clock.systemUTC());
 
-    private final Departement finance = Donnees.departement("Finance");
-    private final Departement it = Donnees.departement("IT");
-    private final Utilisateur manager = Donnees.utilisateur("Manager", Role.MANAGER, finance);
-    private final Utilisateur employe = Donnees.utilisateur("Employe", Role.EMPLOYE, finance);
-    private final Utilisateur employeIt = Donnees.utilisateur("Employe IT", Role.EMPLOYE, it);
+    private final Utilisateur admin = Donnees.utilisateur("Admin", Role.ADMIN);
+    private final Utilisateur manager = Donnees.utilisateur("Manager", Role.MANAGER);
+    private final Utilisateur employe = Donnees.utilisateur("Employe", Role.EMPLOYE);
+    private final Utilisateur inactif = Donnees.utilisateur("Inactif", Role.EMPLOYE);
 
     @BeforeEach
     void initialiser() {
-        when(projets.save(any())).thenAnswer(invocation -> {
+        when(projets.saveAndFlush(any())).thenAnswer(invocation -> {
             Projet projet = invocation.getArgument(0);
             if (projet.getId() == null) {
-                projet.setId(java.util.UUID.randomUUID());
+                projet.setId(UUID.randomUUID());
             }
             return projet;
         });
-        when(utilisateurs.getReferenceById(manager.getId())).thenReturn(manager);
-        when(departements.getReferenceById(finance.getId())).thenReturn(finance);
-        when(activites.avancementMoyenParProjet(any())).thenReturn(List.of());
+        inactif.setActif(false);
+        for (Utilisateur u : List.of(admin, manager, employe, inactif)) {
+            when(utilisateurs.findById(u.getId())).thenReturn(Optional.of(u));
+        }
     }
 
     @Test
@@ -74,49 +74,75 @@ class ProjetServiceTest {
         when(courant.obtenir()).thenReturn(Donnees.connecte(employe));
 
         assertThatThrownBy(() -> service.creer(requete(null, null))).isInstanceOf(AccesInterditException.class);
-        verify(projets, never()).save(any());
+        verify(projets, never()).saveAndFlush(any());
     }
 
     @Test
-    void manager_creeDansSonDepartementEtDevientChefParDefaut() {
+    void manager_devientChefParDefautEtMembreProprietaire() {
         when(courant.obtenir()).thenReturn(Donnees.connecte(manager));
 
-        ProjetResponse reponse = service.creer(requete(null, null));
+        ProjetResponse reponse = service.creer(requete(null, List.of(employe.getId(), manager.getId())));
 
-        assertThat(reponse.departmentId()).isEqualTo(finance.getId());
         assertThat(reponse.ownerId()).isEqualTo(manager.getId());
         assertThat(reponse.status()).isEqualTo(StatutProjet.EN_COURS);
+        assertThat(reponse.priority()).isEqualTo(Priorite.MOYENNE);
         assertThat(reponse.progress()).isZero();
+        assertThat(reponse.memberIds()).containsExactlyInAnyOrder(manager.getId(), employe.getId());
     }
 
     @Test
-    void manager_neCreePasDansUnAutreDepartementNiAvecUnChefExterne() {
+    void membreDesactive_estRefuse() {
         when(courant.obtenir()).thenReturn(Donnees.connecte(manager));
-        when(utilisateurs.findById(employeIt.getId())).thenReturn(Optional.of(employeIt));
 
-        assertThatThrownBy(() -> service.creer(requete(it.getId(), null)))
-                .isInstanceOf(RequeteInvalideException.class).hasMessageContaining("son département");
-        assertThatThrownBy(() -> service.creer(requete(null, employeIt.getId())))
-                .isInstanceOf(RequeteInvalideException.class).hasMessageContaining("votre département");
+        assertThatThrownBy(() -> service.creer(requete(null, List.of(inactif.getId()))))
+                .isInstanceOf(RequeteInvalideException.class).hasMessageContaining("désactivé");
     }
 
     @Test
-    void chefEmploye_neChangePasLeChefDeProjetNiLeDepartement() {
-        Projet projet = Donnees.projet("Interne", employe, finance);
+    void chefEmploye_neChangePasLeChefDeProjet() {
+        Projet projet = Donnees.projet("Interne", employe);
         when(projets.findById(projet.getId())).thenReturn(Optional.of(projet));
         when(courant.obtenir()).thenReturn(Donnees.connecte(employe));
 
         assertThatThrownBy(() -> service.modifier(projet.getId(), new ModifierProjetRequest(
-                null, null, null, null, null, null, manager.getId(), null, null)))
-                .isInstanceOf(AccesInterditException.class);
-        assertThatThrownBy(() -> service.modifier(projet.getId(), new ModifierProjetRequest(
-                null, null, null, null, null, null, null, it.getId(), null)))
+                null, null, null, null, null, null, manager.getId(), null)))
                 .isInstanceOf(AccesInterditException.class);
 
         ProjetResponse renomme = service.modifier(projet.getId(), new ModifierProjetRequest(
-                "Interne v2", null, StatutProjet.EN_ATTENTE, null, null, null, null, null, null));
+                "Interne v2", null, StatutProjet.EN_ATTENTE, null, null, null, null, null));
         assertThat(renomme.name()).isEqualTo("Interne v2");
         assertThat(renomme.status()).isEqualTo(StatutProjet.EN_ATTENTE);
+    }
+
+    @Test
+    void admin_changeLeChef_lAncienResteMembre() {
+        Projet projet = Donnees.projet("Interne", manager);
+        when(projets.findById(projet.getId())).thenReturn(Optional.of(projet));
+        when(courant.obtenir()).thenReturn(Donnees.connecte(admin));
+
+        ProjetResponse reponse = service.modifier(projet.getId(), new ModifierProjetRequest(
+                null, null, null, null, null, null, employe.getId(), null));
+
+        assertThat(reponse.ownerId()).isEqualTo(employe.getId());
+        assertThat(projet.membre(employe.getId())).get()
+                .satisfies(m -> assertThat(m.getRole()).isEqualTo(RoleMembreProjet.PROPRIETAIRE));
+        assertThat(projet.membre(manager.getId())).get()
+                .satisfies(m -> assertThat(m.getRole()).isEqualTo(RoleMembreProjet.MEMBRE));
+    }
+
+    @Test
+    void remplacementDesMembres_conserveLeChef() {
+        Projet projet = Donnees.projet("Interne", manager);
+        projet.ajouterMembre(employe, RoleMembreProjet.MEMBRE);
+        when(projets.findById(projet.getId())).thenReturn(Optional.of(projet));
+        when(courant.obtenir()).thenReturn(Donnees.connecte(manager));
+
+        ProjetResponse reponse = service.modifier(projet.getId(), new ModifierProjetRequest(
+                null, null, null, null, null, null, null, List.of()));
+
+        assertThat(reponse.memberIds()).containsExactly(manager.getId());
+        assertThatThrownBy(() -> service.retirerMembre(projet.getId(), manager.getId()))
+                .isInstanceOf(ConflitMetierException.class);
     }
 
     @Test
@@ -124,21 +150,21 @@ class ProjetServiceTest {
         when(courant.obtenir()).thenReturn(Donnees.connecte(manager));
 
         assertThatThrownBy(() -> service.creer(new CreerProjetRequest("P", null, null, null,
-                LocalDate.of(2025, 5, 1), LocalDate.of(2025, 4, 1), null, null, null)))
+                LocalDate.of(2025, 5, 1), LocalDate.of(2025, 4, 1), null, null)))
                 .isInstanceOf(RequeteInvalideException.class);
     }
 
     @Test
     void suppression_reserveeAuxAdministrateurs() {
-        Projet projet = Donnees.projet("Budget", manager, finance);
+        Projet projet = Donnees.projet("Budget", manager);
         when(projets.findById(projet.getId())).thenReturn(Optional.of(projet));
         when(courant.obtenir()).thenReturn(Donnees.connecte(manager));
 
         assertThatThrownBy(() -> service.supprimer(projet.getId())).isInstanceOf(AccesInterditException.class);
     }
 
-    private static CreerProjetRequest requete(java.util.UUID departementId, java.util.UUID chefId) {
+    private static CreerProjetRequest requete(UUID chefId, List<UUID> membres) {
         return new CreerProjetRequest("Migration cloud", "Description", null, null, null,
-                LocalDate.of(2025, 12, 31), chefId, departementId, null);
+                LocalDate.of(2025, 12, 31), chefId, membres);
     }
 }

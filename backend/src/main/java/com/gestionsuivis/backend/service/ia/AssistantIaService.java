@@ -39,7 +39,6 @@ import com.gestionsuivis.backend.repository.UtilisateurRepository;
 import com.gestionsuivis.backend.security.ControleAcces;
 import com.gestionsuivis.backend.security.UtilisateurCourant;
 import com.gestionsuivis.backend.security.UtilisateurConnecte;
-import com.gestionsuivis.backend.service.CalculAvancement;
 import com.gestionsuivis.backend.service.rapport.BilanService;
 import com.gestionsuivis.backend.service.rapport.SuiviService;
 import lombok.extern.slf4j.Slf4j;
@@ -89,7 +88,6 @@ public class AssistantIaService {
     private final UtilisateurRepository utilisateurs;
     private final ProjetRepository projets;
     private final ActiviteRepository activites;
-    private final CalculAvancement avancement;
     private final ControleAcces controle;
     private final UtilisateurCourant utilisateurCourant;
     private final SuiviService suivi;
@@ -103,7 +101,7 @@ public class AssistantIaService {
     public AssistantIaService(ServiceIaClient client, ConversationIaRepository conversations,
                               MessageConversationIaRepository messages, EvenementUsageIaRepository usages,
                               UtilisateurRepository utilisateurs, ProjetRepository projets,
-                              ActiviteRepository activites, CalculAvancement avancement, ControleAcces controle,
+                              ActiviteRepository activites, ControleAcces controle,
                               UtilisateurCourant utilisateurCourant, SuiviService suivi, BilanService bilans,
                               AssistantMapper mapper, JsonMapper json, Clock horloge,
                               PlatformTransactionManager transactions) {
@@ -114,7 +112,6 @@ public class AssistantIaService {
         this.utilisateurs = utilisateurs;
         this.projets = projets;
         this.activites = activites;
-        this.avancement = avancement;
         this.controle = controle;
         this.utilisateurCourant = utilisateurCourant;
         this.suivi = suivi;
@@ -159,9 +156,7 @@ public class AssistantIaService {
         LocalDate aujourdHui = LocalDate.now(horloge);
         List<Projet> projetsVisibles = projets.findAll(SpecificationsProjet.visiblesPar(u));
         List<Activite> activitesVisibles = activites.findAll(SpecificationsActivite.visiblesPar(u));
-        String contexte = ContexteIa.construire(u.role().json(), projetsVisibles,
-                avancement.parProjet(projetsVisibles.stream().map(Projet::getId).toList()), activitesVisibles,
-                aujourdHui);
+        String contexte = ContexteIa.construire(u.role().json(), projetsVisibles, activitesVisibles, aujourdHui);
         historique.add(MessageIa.utilisateur(ContexteIa.enrichir(contexte, question)));
         return new Preparation(historique);
     }
@@ -176,12 +171,17 @@ public class AssistantIaService {
             conversation = conversations.save(conversation);
         } else {
             conversation = chargerSienne(u, conversationId);
-            conversation.setDateModification(horloge.instant());
         }
-        messages.save(message(conversation, RoleMessageIa.USER, question));
-        MessageConversationIa reponseEnregistree = messages.save(
-                message(conversation, RoleMessageIa.ASSISTANT, reponse.message().contenu()));
-        tracerUsage(u, conversation.getId(), "chat", reponse.modele(), reponse.usage());
+        MessageConversationIa questionEnregistree = message(conversation, RoleMessageIa.USER, question);
+        MessageConversationIa reponseEnregistree = message(conversation, RoleMessageIa.ASSISTANT,
+                reponse.message().contenu());
+        if (reponse.usage() != null) {
+            questionEnregistree.setJetonsUtilises(reponse.usage().jetonsPrompt());
+            reponseEnregistree.setJetonsUtilises(reponse.usage().jetonsReponse());
+        }
+        messages.save(questionEnregistree);
+        reponseEnregistree = messages.saveAndFlush(reponseEnregistree);
+        tracerUsage(u, "/api/ai/chat", reponse.modele(), reponse.usage());
         return new MessageChatResponse(conversation.getId(), mapper.versDto(reponseEnregistree));
     }
 
@@ -193,7 +193,9 @@ public class AssistantIaService {
                 c -> mapper.versDto(c,
                         messages.findFirstByConversationIdAndRoleOrderByDateCreationAsc(c.getId(), RoleMessageIa.USER)
                                 .map(MessageConversationIa::getContenu).orElse(null),
-                        messages.countByConversationId(c.getId()))));
+                        messages.countByConversationId(c.getId()),
+                        messages.findFirstByConversationIdOrderByDateCreationDesc(c.getId())
+                                .map(MessageConversationIa::getDateCreation).orElse(null))));
     }
 
     public PageResponse<MessageAssistantResponse> listerMessages(UUID conversationId, Pageable pageable) {
@@ -239,7 +241,7 @@ public class AssistantIaService {
         });
 
         AnalyseRisquesIaReponse reponse = client.analyserRisques(donnees.requete());
-        ecriture.executeWithoutResult(statut -> tracerUsage(u, null, "analyze_risks", reponse.modele(), reponse.usage()));
+        ecriture.executeWithoutResult(statut -> tracerUsage(u, "/api/ai/projects/{id}/risk-analysis", reponse.modele(), reponse.usage()));
         List<AnalyseRisquesResponse.Risque> risques = reponse.risks() == null ? List.of()
                 : reponse.risks().stream()
                 .map(r -> new AnalyseRisquesResponse.Risque(r.level(), r.title(), r.description(), r.recommendation()))
@@ -267,7 +269,7 @@ public class AssistantIaService {
         Map<String, Object> donnees = new LinkedHashMap<>(json.convertValue(bilan, new TypeReference<Map<String, Object>>() {
         }));
         RapportIaReponse reponse = client.genererRapport(new RapportIaRequete(requete.reportType(), donnees, LANGUE));
-        ecriture.executeWithoutResult(statut -> tracerUsage(u, null, "generate_report", reponse.modele(), reponse.usage()));
+        ecriture.executeWithoutResult(statut -> tracerUsage(u, "/api/ai/reports", reponse.modele(), reponse.usage()));
         return new RapportIaResponse(requete.reportType(), reponse.title(), reponse.content(),
                 reponse.sections() == null ? Map.of() : reponse.sections(), reponse.modele());
     }
@@ -295,16 +297,16 @@ public class AssistantIaService {
         return message;
     }
 
-    private void tracerUsage(UtilisateurConnecte u, UUID conversationId, String operation, String modele, UsageIa usage) {
+    /** Trace {@code ai_usage_events} : route appelée, modèle et jetons ({@code cost_usd} laissé à 0, non fourni par l'IA). */
+    private void tracerUsage(UtilisateurConnecte u, String operation, String modele, UsageIa usage) {
         EvenementUsageIa evenement = new EvenementUsageIa();
         evenement.setUtilisateurId(u.id());
-        evenement.setConversationId(conversationId);
-        evenement.setOperation(operation);
-        evenement.setModele(modele == null || modele.length() <= 100 ? modele : modele.substring(0, 100));
+        evenement.setEndpoint(operation);
+        String nomModele = modele == null || modele.isBlank() ? "inconnu" : modele;
+        evenement.setModele(nomModele.length() <= 100 ? nomModele : nomModele.substring(0, 100));
         if (usage != null) {
-            evenement.setJetonsPrompt(usage.jetonsPrompt());
-            evenement.setJetonsReponse(usage.jetonsReponse());
-            evenement.setJetonsTotal(usage.jetonsTotal());
+            evenement.setJetonsPrompt(Math.max(0, usage.jetonsPrompt()));
+            evenement.setJetonsReponse(Math.max(0, usage.jetonsReponse()));
         }
         usages.save(evenement);
     }

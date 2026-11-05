@@ -12,9 +12,9 @@ import java.util.UUID;
 
 /**
  * Projet renvoyé par l'API, au format {@code Project} du frontend
- * ({@code src/types/models.ts}), complété par le département, l'indicateur de
- * retard et le nombre d'activités. {@code progress} est calculé à partir des
- * activités (une activité terminée compte pour 100 %).
+ * ({@code src/types/models.ts}), complété par l'indicateur de retard.
+ * {@code progress} est la colonne {@code projects.progress}, recalculée par le
+ * backend à partir des activités (une activité terminée compte pour 100 %).
  */
 public record ProjetResponse(
         UUID id,
@@ -29,8 +29,6 @@ public record ProjetResponse(
         List<UtilisateurResponse> members,
         LocalDate startDate,
         LocalDate dueDate,
-        UUID departmentId,
-        String departmentName,
         @JsonProperty("isOverdue") boolean isOverdue,
         Instant createdAt,
         Instant updatedAt) {

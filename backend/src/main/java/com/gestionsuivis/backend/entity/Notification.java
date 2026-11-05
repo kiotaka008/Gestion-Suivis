@@ -1,9 +1,8 @@
 package com.gestionsuivis.backend.entity;
 
 import jakarta.persistence.Column;
+import jakarta.persistence.Convert;
 import jakarta.persistence.Entity;
-import jakarta.persistence.EnumType;
-import jakarta.persistence.Enumerated;
 import jakarta.persistence.FetchType;
 import jakarta.persistence.Id;
 import jakarta.persistence.JoinColumn;
@@ -12,16 +11,16 @@ import jakarta.persistence.Table;
 import lombok.Getter;
 import lombok.NoArgsConstructor;
 import lombok.Setter;
+import org.hibernate.annotations.ColumnTransformer;
 import org.hibernate.annotations.CreationTimestamp;
+import org.hibernate.annotations.TenantId;
 import org.hibernate.annotations.UuidGenerator;
 
 import java.time.Instant;
 import java.util.UUID;
 
 /**
- * Notification destinée à un utilisateur (échéance, affectation, fin d'activité...).
- * <p>
- * PROVISOIRE : structure supposée (schéma PostgreSQL non fourni).
+ * Notification destinée à un utilisateur : table {@code notifications}.
  */
 @Getter
 @Setter
@@ -35,28 +34,27 @@ public class Notification {
     @Column(name = "id", nullable = false, updatable = false)
     private UUID id;
 
+    @TenantId
+    @Column(name = "organization_id", nullable = false, updatable = false)
+    private UUID organisationId;
+
     @ManyToOne(fetch = FetchType.LAZY, optional = false)
-    @JoinColumn(name = "recipient_id", nullable = false)
+    @JoinColumn(name = "user_id", nullable = false)
     private Utilisateur destinataire;
 
-    @Enumerated(EnumType.STRING)
-    @Column(name = "type", nullable = false, length = 20)
+    @Convert(converter = TypeNotification.Convertisseur.class)
+    @ColumnTransformer(read = "type::text", write = "?::notification_type")
+    @Column(name = "type", nullable = false, columnDefinition = "notification_type")
     private TypeNotification type;
 
-    @Column(name = "title", nullable = false, length = 200)
+    @Column(name = "title", nullable = false, length = 255)
     private String titre;
 
-    @Column(name = "message", length = 1000)
+    @Column(name = "message", columnDefinition = "text")
     private String message;
 
     @Column(name = "is_read", nullable = false)
     private boolean lue;
-
-    @Column(name = "project_id")
-    private UUID projetId;
-
-    @Column(name = "activity_id")
-    private UUID activiteId;
 
     @CreationTimestamp
     @Column(name = "created_at", nullable = false, updatable = false)

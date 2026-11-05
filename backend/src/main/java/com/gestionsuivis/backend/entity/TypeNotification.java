@@ -4,9 +4,8 @@ import com.fasterxml.jackson.annotation.JsonCreator;
 import com.fasterxml.jackson.annotation.JsonValue;
 
 /**
- * Types de notification, valeurs JSON identiques au frontend
- * ({@code Notification.type} dans {@code src/types/models.ts}).
- * Les affectations et fins d'activité utilisent {@code activity}, les échéances {@code deadline}.
+ * Types de notification : type PostgreSQL {@code notification_type}
+ * ({@code project | activity | comment | deadline | ai | user}), valeurs identiques au frontend.
  */
 public enum TypeNotification {
 
@@ -31,5 +30,11 @@ public enum TypeNotification {
     @JsonCreator
     public static TypeNotification depuisJson(String valeur) {
         return ValeursJson.depuis(TypeNotification.class, values(), TypeNotification::json, valeur);
+    }
+
+    public static class Convertisseur extends ConvertisseurEnumPg<TypeNotification> {
+        public Convertisseur() {
+            super(TypeNotification.class, TypeNotification::json);
+        }
     }
 }

@@ -17,11 +17,13 @@ public class AssistantMapper {
                 message.getDateCreation());
     }
 
-    public ConversationResponse versDto(ConversationIa conversation, String premiereQuestion, long nombreMessages) {
+    public ConversationResponse versDto(ConversationIa conversation, String premiereQuestion, long nombreMessages,
+                                        java.time.Instant dernierMessage) {
         String apercu = premiereQuestion == null ? ""
                 : premiereQuestion.length() <= LONGUEUR_APERCU ? premiereQuestion
                 : premiereQuestion.substring(0, LONGUEUR_APERCU);
         return new ConversationResponse(conversation.getId(), conversation.getTitre(), apercu, nombreMessages,
-                conversation.getDateCreation(), conversation.getDateModification());
+                conversation.getDateCreation(),
+                dernierMessage == null ? conversation.getDateCreation() : dernierMessage);
     }
 }

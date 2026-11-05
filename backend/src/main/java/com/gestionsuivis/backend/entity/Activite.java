@@ -1,9 +1,8 @@
 package com.gestionsuivis.backend.entity;
 
 import jakarta.persistence.Column;
+import jakarta.persistence.Convert;
 import jakarta.persistence.Entity;
-import jakarta.persistence.EnumType;
-import jakarta.persistence.Enumerated;
 import jakarta.persistence.FetchType;
 import jakarta.persistence.Id;
 import jakarta.persistence.JoinColumn;
@@ -12,19 +11,19 @@ import jakarta.persistence.Table;
 import lombok.Getter;
 import lombok.NoArgsConstructor;
 import lombok.Setter;
+import org.hibernate.annotations.ColumnTransformer;
 import org.hibernate.annotations.CreationTimestamp;
+import org.hibernate.annotations.TenantId;
 import org.hibernate.annotations.UpdateTimestamp;
 import org.hibernate.annotations.UuidGenerator;
 
-import java.math.BigDecimal;
 import java.time.Instant;
 import java.time.LocalDate;
 import java.util.UUID;
 
 /**
- * Activité (tâche) d'un projet : affectation, priorité, statut, dates et heures.
- * <p>
- * PROVISOIRE : structure supposée (schéma PostgreSQL non fourni).
+ * Activité (tâche) d'un projet : table {@code activities} (migration
+ * {@code 20261104_004} comprise pour {@code start_date}).
  */
 @Getter
 @Setter
@@ -38,22 +37,28 @@ public class Activite {
     @Column(name = "id", nullable = false, updatable = false)
     private UUID id;
 
+    @TenantId
+    @Column(name = "organization_id", nullable = false, updatable = false)
+    private UUID organisationId;
+
     @ManyToOne(fetch = FetchType.LAZY, optional = false)
     @JoinColumn(name = "project_id", nullable = false)
     private Projet projet;
 
-    @Column(name = "title", nullable = false, length = 200)
+    @Column(name = "title", nullable = false, length = 255)
     private String titre;
 
-    @Column(name = "description", length = 5000)
+    @Column(name = "description", columnDefinition = "text")
     private String description;
 
-    @Enumerated(EnumType.STRING)
-    @Column(name = "status", nullable = false, length = 20)
+    @Convert(converter = StatutActivite.Convertisseur.class)
+    @ColumnTransformer(read = "status::text", write = "?::activity_status")
+    @Column(name = "status", nullable = false, columnDefinition = "activity_status")
     private StatutActivite statut = StatutActivite.A_FAIRE;
 
-    @Enumerated(EnumType.STRING)
-    @Column(name = "priority", nullable = false, length = 20)
+    @Convert(converter = Priorite.Convertisseur.class)
+    @ColumnTransformer(read = "priority::text", write = "?::item_priority")
+    @Column(name = "priority", nullable = false, columnDefinition = "item_priority")
     private Priorite priorite = Priorite.MOYENNE;
 
     @Column(name = "progress", nullable = false)
@@ -69,19 +74,6 @@ public class Activite {
     @Column(name = "due_date")
     private LocalDate dateEcheance;
 
-    @Column(name = "planned_hours", precision = 7, scale = 2)
-    private BigDecimal heuresPrevues;
-
-    @Column(name = "actual_hours", precision = 7, scale = 2)
-    private BigDecimal heuresReelles;
-
-    @Column(name = "completed_at")
-    private Instant dateFin;
-
-    @ManyToOne(fetch = FetchType.LAZY)
-    @JoinColumn(name = "created_by")
-    private Utilisateur createur;
-
     @CreationTimestamp
     @Column(name = "created_at", nullable = false, updatable = false)
     private Instant dateCreation;
@@ -94,9 +86,16 @@ public class Activite {
         return statut == StatutActivite.TERMINE;
     }
 
-    /** En retard : échéance dépassée et activité non terminée (statut EN_RETARD ou calcul). */
+    /** En retard : échéance dépassée et activité non terminée. */
     public boolean estEnRetard(LocalDate aujourdHui) {
-        return !estTerminee() && (statut == StatutActivite.EN_RETARD
-                || (dateEcheance != null && dateEcheance.isBefore(aujourdHui)));
+        return !estTerminee() && dateEcheance != null && dateEcheance.isBefore(aujourdHui);
+    }
+
+    /**
+     * Date de fin approximative : le schéma ne conserve pas de date d'achèvement,
+     * la dernière modification d'une activité terminée en tient lieu.
+     */
+    public Instant dateFin() {
+        return estTerminee() ? dateModification : null;
     }
 }

@@ -47,7 +47,7 @@ public class AssistantIaController {
     public PageResponse<ConversationResponse> conversations(
             @RequestParam(required = false) Integer page, @RequestParam(required = false) Integer perPage) {
         return service.listerConversations(PaginationConfig.creer(page, perPage, null, null, Map.of(),
-                Sort.by(Sort.Direction.DESC, "dateModification")));
+                Sort.by(Sort.Direction.DESC, "dateCreation")));
     }
 
     @GetMapping("/conversations/{id}/messages")

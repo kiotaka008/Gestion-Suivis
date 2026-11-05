@@ -1,7 +1,6 @@
 package com.gestionsuivis.backend.security;
 
 import com.gestionsuivis.backend.entity.Activite;
-import com.gestionsuivis.backend.entity.Departement;
 import com.gestionsuivis.backend.entity.Projet;
 import com.gestionsuivis.backend.entity.Role;
 import com.gestionsuivis.backend.entity.StatutActivite;
@@ -20,8 +19,8 @@ import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.when;
 
 /**
- * Règles d'autorisation métier (cahier des charges, §7) :
- * ADMIN tout, MANAGER son département, EMPLOYE ses propres activités.
+ * Règles d'autorisation métier, à l'intérieur d'une organisation : ADMIN tout,
+ * MANAGER consulte tout et gère ses projets, EMPLOYE ses propres activités.
  */
 class ControleAccesTest {
 
@@ -29,47 +28,45 @@ class ControleAccesTest {
     private final ActiviteRepository activites = mock(ActiviteRepository.class);
     private final ControleAcces controle = new ControleAcces(projets, activites);
 
-    private final Departement finance = Donnees.departement("Finance");
-    private final Departement it = Donnees.departement("IT");
-    private final Utilisateur admin = Donnees.utilisateur("Admin", Role.ADMIN, null);
-    private final Utilisateur managerFinance = Donnees.utilisateur("Manager Finance", Role.MANAGER, finance);
-    private final Utilisateur managerIt = Donnees.utilisateur("Manager IT", Role.MANAGER, it);
-    private final Utilisateur employe = Donnees.utilisateur("Employe", Role.EMPLOYE, finance);
-    private final Utilisateur autreEmploye = Donnees.utilisateur("Autre", Role.EMPLOYE, finance);
+    private final Utilisateur admin = Donnees.utilisateur("Admin", Role.ADMIN);
+    private final Utilisateur managerA = Donnees.utilisateur("Manager A", Role.MANAGER);
+    private final Utilisateur managerB = Donnees.utilisateur("Manager B", Role.MANAGER);
+    private final Utilisateur employe = Donnees.utilisateur("Employe", Role.EMPLOYE);
+    private final Utilisateur autreEmploye = Donnees.utilisateur("Autre", Role.EMPLOYE);
 
-    private Projet projetFinance;
+    private Projet projetA;
     private Activite activiteEmploye;
 
     @BeforeEach
     void initialiser() {
-        projetFinance = Donnees.projet("Budget", managerFinance, finance);
-        activiteEmploye = Donnees.activite("Saisie", projetFinance, employe, StatutActivite.EN_COURS, null);
-        when(projets.existsByIdAndMembresId(any(), any())).thenReturn(false);
+        projetA = Donnees.projet("Budget", managerA);
+        activiteEmploye = Donnees.activite("Saisie", projetA, employe, StatutActivite.EN_COURS, null);
+        when(projets.existsByIdAndMembresUtilisateurId(any(), any())).thenReturn(false);
         when(activites.existsByProjetIdAndResponsableId(any(), any())).thenReturn(false);
     }
 
     @Test
     void admin_gereTout() {
-        assertThat(controle.peutGererProjet(Donnees.connecte(admin), projetFinance)).isTrue();
+        assertThat(controle.peutGererProjet(Donnees.connecte(admin), projetA)).isTrue();
         assertThat(controle.peutGererActivite(Donnees.connecte(admin), activiteEmploye)).isTrue();
         assertThat(controle.peutVoirUtilisateur(Donnees.connecte(admin), employe)).isTrue();
     }
 
     @Test
-    void manager_gereLesProjetsDeSonDepartementUniquement() {
-        Projet projetIt = Donnees.projet("Serveurs", managerIt, it);
+    void manager_gereSesProjetsEtConsulteLesAutres() {
+        Projet projetB = Donnees.projet("Serveurs", managerB);
 
-        assertThat(controle.peutGererProjet(Donnees.connecte(managerFinance), projetFinance)).isTrue();
-        assertThat(controle.peutGererProjet(Donnees.connecte(managerFinance), projetIt)).isFalse();
-        assertThat(controle.peutVoirProjet(Donnees.connecte(managerFinance), projetIt)).isFalse();
-        assertThatThrownBy(() -> controle.verifierGererProjet(Donnees.connecte(managerFinance), projetIt))
+        assertThat(controle.peutGererProjet(Donnees.connecte(managerA), projetA)).isTrue();
+        assertThat(controle.peutGererProjet(Donnees.connecte(managerA), projetB)).isFalse();
+        assertThat(controle.peutVoirProjet(Donnees.connecte(managerA), projetB)).isTrue();
+        assertThat(controle.peutVoirActivite(Donnees.connecte(managerB), activiteEmploye)).isTrue();
+        assertThatThrownBy(() -> controle.verifierGererProjet(Donnees.connecte(managerA), projetB))
                 .isInstanceOf(AccesInterditException.class);
     }
 
     @Test
-    void manager_voitLesUtilisateursDeSonDepartementUniquement() {
-        assertThat(controle.peutVoirUtilisateur(Donnees.connecte(managerFinance), employe)).isTrue();
-        assertThat(controle.peutVoirUtilisateur(Donnees.connecte(managerIt), employe)).isFalse();
+    void manager_voitLesUtilisateursDeSonOrganisation() {
+        assertThat(controle.peutVoirUtilisateur(Donnees.connecte(managerA), employe)).isTrue();
     }
 
     @Test
@@ -94,17 +91,20 @@ class ControleAccesTest {
     @Test
     void employe_voitUnProjetDontIlEstMembreOuAffecte() {
         UtilisateurConnecte u = Donnees.connecte(employe);
-        assertThat(controle.peutVoirProjet(u, projetFinance)).isFalse();
+        assertThat(controle.peutVoirProjet(u, projetA)).isFalse();
 
-        when(activites.existsByProjetIdAndResponsableId(projetFinance.getId(), employe.getId())).thenReturn(true);
+        when(activites.existsByProjetIdAndResponsableId(projetA.getId(), employe.getId())).thenReturn(true);
+        assertThat(controle.peutVoirProjet(u, projetA)).isTrue();
+        assertThat(controle.peutGererProjet(u, projetA)).isFalse();
 
-        assertThat(controle.peutVoirProjet(u, projetFinance)).isTrue();
-        assertThat(controle.peutGererProjet(u, projetFinance)).isFalse();
+        Projet autreProjet = Donnees.projet("Autre", managerB);
+        when(projets.existsByIdAndMembresUtilisateurId(autreProjet.getId(), employe.getId())).thenReturn(true);
+        assertThat(controle.peutVoirProjet(u, autreProjet)).isTrue();
     }
 
     @Test
     void chefDeProjetEmploye_gereSonProjet() {
-        Projet projetDeLEmploye = Donnees.projet("Interne", employe, finance);
+        Projet projetDeLEmploye = Donnees.projet("Interne", employe);
 
         assertThat(controle.peutGererProjet(Donnees.connecte(employe), projetDeLEmploye)).isTrue();
     }
@@ -113,7 +113,7 @@ class ControleAccesTest {
     void creationDeProjet_reserveeAuxAdminEtManager() {
         assertThatThrownBy(() -> controle.verifierCreerProjet(Donnees.connecte(employe)))
                 .isInstanceOf(AccesInterditException.class);
-        controle.verifierCreerProjet(Donnees.connecte(managerFinance));
+        controle.verifierCreerProjet(Donnees.connecte(managerA));
         controle.verifierCreerProjet(Donnees.connecte(admin));
     }
 }

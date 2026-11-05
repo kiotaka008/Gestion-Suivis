@@ -2,47 +2,49 @@ package com.gestionsuivis.backend.entity;
 
 import jakarta.persistence.Column;
 import jakarta.persistence.Entity;
-import jakarta.persistence.FetchType;
 import jakarta.persistence.Id;
-import jakarta.persistence.JoinColumn;
-import jakarta.persistence.ManyToOne;
 import jakarta.persistence.Table;
 import lombok.Getter;
 import lombok.NoArgsConstructor;
 import lombok.Setter;
 import org.hibernate.annotations.CreationTimestamp;
+import org.hibernate.annotations.TenantId;
 import org.hibernate.annotations.UuidGenerator;
 
 import java.time.Instant;
 import java.util.UUID;
 
 /**
- * Commentaire sur une activité.
- * <p>
- * PROVISOIRE : structure supposée (schéma PostgreSQL non fourni).
+ * Entrée du journal d'audit : table {@code audit_logs}. La colonne {@code metadata}
+ * (JSONB, facultative) n'est pas utilisée par le backend.
  */
 @Getter
 @Setter
 @NoArgsConstructor
 @Entity
-@Table(name = "activity_comments")
-public class Commentaire {
+@Table(name = "audit_logs")
+public class JournalAudit {
 
     @Id
     @UuidGenerator
     @Column(name = "id", nullable = false, updatable = false)
     private UUID id;
 
-    @ManyToOne(fetch = FetchType.LAZY, optional = false)
-    @JoinColumn(name = "activity_id", nullable = false)
-    private Activite activite;
+    @TenantId
+    @Column(name = "organization_id", updatable = false)
+    private UUID organisationId;
 
-    @ManyToOne(fetch = FetchType.LAZY, optional = false)
-    @JoinColumn(name = "author_id", nullable = false)
-    private Utilisateur auteur;
+    @Column(name = "user_id")
+    private UUID utilisateurId;
 
-    @Column(name = "content", nullable = false, length = 5000)
-    private String contenu;
+    @Column(name = "action", nullable = false, length = 100)
+    private String action;
+
+    @Column(name = "entity_type", nullable = false, length = 50)
+    private String typeEntite;
+
+    @Column(name = "entity_id")
+    private UUID entiteId;
 
     @CreationTimestamp
     @Column(name = "created_at", nullable = false, updatable = false)

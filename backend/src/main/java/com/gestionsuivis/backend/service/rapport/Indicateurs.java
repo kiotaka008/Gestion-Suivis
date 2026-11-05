@@ -3,8 +3,6 @@ package com.gestionsuivis.backend.service.rapport;
 import com.gestionsuivis.backend.entity.Activite;
 import com.gestionsuivis.backend.entity.StatutActivite;
 
-import java.math.BigDecimal;
-import java.math.RoundingMode;
 import java.time.Duration;
 import java.time.LocalDate;
 import java.util.Collection;
@@ -13,7 +11,7 @@ import java.util.Collection;
  * Calcul des indicateurs d'un ensemble d'activités (logique pure, testable sans base).
  * <p>
  * Les catégories sont disjointes : terminées, en retard (non terminées dont
- * l'échéance est dépassée ou au statut EN_RETARD), en cours, à faire.
+ * l'échéance est dépassée), en cours, à faire (à faire ou bloquées).
  *
  * @param total               nombre d'activités
  * @param terminees           activités au statut TERMINE
@@ -22,11 +20,8 @@ import java.util.Collection;
  * @param enRetard            activités en retard
  * @param tauxRealisation     terminees / total, en %, arrondi au dixième
  * @param tauxRetard          enRetard / total, en %, arrondi au dixième
- * @param heuresPrevues       somme des heures prévues renseignées
- * @param heuresReelles       somme des heures réelles renseignées
- * @param ecartHeures         heuresReelles - heuresPrevues (positif = dépassement)
- * @param tauxEcartHeures     ecartHeures / heuresPrevues en %, {@code null} sans heures prévues
- * @param dureeMoyenneJours   durée moyenne création → fin des activités terminées, {@code null} si aucune
+ * @param dureeMoyenneJours   durée moyenne création → dernière modification des activités
+ *                            terminées (approximation), {@code null} si aucune
  */
 public record Indicateurs(
         long total,
@@ -36,10 +31,6 @@ public record Indicateurs(
         long enRetard,
         double tauxRealisation,
         double tauxRetard,
-        BigDecimal heuresPrevues,
-        BigDecimal heuresReelles,
-        BigDecimal ecartHeures,
-        Double tauxEcartHeures,
         Double dureeMoyenneJours) {
 
     public static Indicateurs calculer(Collection<Activite> activites, LocalDate aujourdHui) {
@@ -47,16 +38,14 @@ public record Indicateurs(
         long enCours = 0;
         long aFaire = 0;
         long enRetard = 0;
-        BigDecimal prevues = BigDecimal.ZERO;
-        BigDecimal reelles = BigDecimal.ZERO;
         double sommeJours = 0;
         long nombreDurees = 0;
 
         for (Activite activite : activites) {
             if (activite.estTerminee()) {
                 terminees++;
-                if (activite.getDateFin() != null && activite.getDateCreation() != null) {
-                    sommeJours += Duration.between(activite.getDateCreation(), activite.getDateFin()).toMinutes() / 1440.0;
+                if (activite.dateFin() != null && activite.getDateCreation() != null) {
+                    sommeJours += Duration.between(activite.getDateCreation(), activite.dateFin()).toMinutes() / 1440.0;
                     nombreDurees++;
                 }
             } else if (activite.estEnRetard(aujourdHui)) {
@@ -66,23 +55,11 @@ public record Indicateurs(
             } else {
                 aFaire++;
             }
-            if (activite.getHeuresPrevues() != null) {
-                prevues = prevues.add(activite.getHeuresPrevues());
-            }
-            if (activite.getHeuresReelles() != null) {
-                reelles = reelles.add(activite.getHeuresReelles());
-            }
         }
 
         long total = activites.size();
-        BigDecimal ecart = reelles.subtract(prevues);
-        Double tauxEcart = prevues.signum() > 0
-                ? arrondir(ecart.multiply(BigDecimal.valueOf(100)).divide(prevues, 4, RoundingMode.HALF_UP).doubleValue())
-                : null;
         return new Indicateurs(total, terminees, enCours, aFaire, enRetard,
                 pourcentage(terminees, total), pourcentage(enRetard, total),
-                prevues.setScale(2, RoundingMode.HALF_UP), reelles.setScale(2, RoundingMode.HALF_UP),
-                ecart.setScale(2, RoundingMode.HALF_UP), tauxEcart,
                 nombreDurees == 0 ? null : arrondir(sommeJours / nombreDurees));
     }
 

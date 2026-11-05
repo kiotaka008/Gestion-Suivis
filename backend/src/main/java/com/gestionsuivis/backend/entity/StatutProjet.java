@@ -4,18 +4,15 @@ import com.fasterxml.jackson.annotation.JsonCreator;
 import com.fasterxml.jackson.annotation.JsonValue;
 
 /**
- * Statuts de projet du cahier des charges.
- * <p>
- * Correspondance JSON : {@code active}, {@code completed} et {@code on_hold} existent
- * déjà dans le frontend ; {@code cancelled} est une valeur proposée pour ANNULE.
- * La valeur frontend {@code archived} n'a pas d'équivalent et est refusée.
+ * Statuts de projet : type PostgreSQL {@code project_status}
+ * ({@code active | on_hold | completed | archived}), valeurs identiques au frontend.
  */
 public enum StatutProjet {
 
     EN_COURS("active"),
-    TERMINE("completed"),
     EN_ATTENTE("on_hold"),
-    ANNULE("cancelled");
+    TERMINE("completed"),
+    ARCHIVE("archived");
 
     private final String json;
 
@@ -33,8 +30,14 @@ public enum StatutProjet {
         return ValeursJson.depuis(StatutProjet.class, values(), StatutProjet::json, valeur);
     }
 
-    /** Un projet clos n'est plus considéré comme en retard. */
+    /** Un projet clos (terminé ou archivé) n'est plus considéré comme en retard. */
     public boolean estClos() {
-        return this == TERMINE || this == ANNULE;
+        return this == TERMINE || this == ARCHIVE;
+    }
+
+    public static class Convertisseur extends ConvertisseurEnumPg<StatutProjet> {
+        public Convertisseur() {
+            super(StatutProjet.class, StatutProjet::json);
+        }
     }
 }
