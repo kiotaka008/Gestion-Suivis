@@ -3,16 +3,15 @@ package com.gestionsuivis.backend.repository;
 import com.gestionsuivis.backend.entity.Role;
 import com.gestionsuivis.backend.entity.Utilisateur;
 import com.gestionsuivis.backend.security.UtilisateurConnecte;
-import jakarta.persistence.criteria.JoinType;
 import jakarta.persistence.criteria.Predicate;
 import org.springframework.data.jpa.domain.Specification;
 
 import java.util.ArrayList;
 import java.util.List;
-import java.util.UUID;
 
 /**
- * Filtres des utilisateurs : ADMIN voit tout, MANAGER son département, EMPLOYE lui-même.
+ * Filtres des utilisateurs : ADMIN et MANAGER voient toute leur organisation,
+ * EMPLOYE lui-même.
  */
 public final class SpecificationsUtilisateur {
 
@@ -20,20 +19,13 @@ public final class SpecificationsUtilisateur {
     }
 
     public static Specification<Utilisateur> visiblesPar(UtilisateurConnecte u) {
-        if (u.estAdmin()) {
+        if (u.estAdmin() || u.estManager()) {
             return Specification.unrestricted();
         }
-        return (racine, requete, cb) -> {
-            Predicate soiMeme = cb.equal(racine.get("id"), u.id());
-            if (u.estManager() && u.departementId() != null) {
-                return cb.or(soiMeme,
-                        cb.equal(racine.join("departement", JoinType.LEFT).get("id"), u.departementId()));
-            }
-            return soiMeme;
-        };
+        return (racine, requete, cb) -> cb.equal(racine.get("id"), u.id());
     }
 
-    public static Specification<Utilisateur> filtres(String recherche, Role role, Boolean actif, UUID departementId) {
+    public static Specification<Utilisateur> filtres(String recherche, Role role, Boolean actif) {
         return (racine, requete, cb) -> {
             List<Predicate> et = new ArrayList<>();
             if (recherche != null && !recherche.isBlank()) {
@@ -46,9 +38,6 @@ public final class SpecificationsUtilisateur {
             }
             if (actif != null) {
                 et.add(cb.equal(racine.get("actif"), actif));
-            }
-            if (departementId != null) {
-                et.add(cb.equal(racine.get("departement").get("id"), departementId));
             }
             return cb.and(et.toArray(Predicate[]::new));
         };

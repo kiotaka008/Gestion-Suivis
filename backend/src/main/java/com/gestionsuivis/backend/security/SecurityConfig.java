@@ -1,5 +1,6 @@
 package com.gestionsuivis.backend.security;
 
+import com.gestionsuivis.backend.config.ExecuteurOrganisation;
 import com.gestionsuivis.backend.repository.UtilisateurRepository;
 import com.nimbusds.jose.jwk.source.ImmutableSecret;
 import lombok.extern.slf4j.Slf4j;
@@ -41,8 +42,10 @@ import java.util.List;
  *   <li>sans session serveur : JWT HS256 dans un cookie HttpOnly (ou en-tête Bearer) ;</li>
  *   <li>CSRF pour application monopage : cookie {@code XSRF-TOKEN} + en-tête
  *       {@code X-XSRF-TOKEN} (noms par défaut d'Axios), exigé pour toute requête
- *       modifiante authentifiée par cookie. Non exigé sur la connexion, l'inscription et
- *       les requêtes portant un en-tête {@code Authorization: Bearer} (Postman, curl) ;</li>
+ *       modifiante authentifiée par cookie. Non exigé sur la connexion, la déconnexion
+ *       (qui ne fait qu'effacer le cookie : un frontend sur un autre port ne transmet pas
+ *       toujours l'en-tête), l'inscription et les requêtes portant un en-tête
+ *       {@code Authorization: Bearer} (Postman, curl) ;</li>
  *   <li>CORS avec cookies pour {@code http://localhost:5173} et {@code http://localhost:3000} ;</li>
  *   <li>401 / 403 au format JSON commun ;</li>
  *   <li>autorisations fines vérifiées dans les services ({@code ControleAcces}).</li>
@@ -103,9 +106,10 @@ public class SecurityConfig {
 
     @Bean
     public SecurityFilterChain securityFilterChain(HttpSecurity http, UtilisateurRepository utilisateurs,
-                                                   JwtDecoder jwtDecoder, JsonMapper jsonMapper) throws Exception {
+                                                   ExecuteurOrganisation executeur, JwtDecoder jwtDecoder,
+                                                   JsonMapper jsonMapper) throws Exception {
         ErreursSecuriteHandler erreurs = new ErreursSecuriteHandler(jsonMapper);
-        ConvertisseurJwtUtilisateur convertisseur = new ConvertisseurJwtUtilisateur(utilisateurs);
+        ConvertisseurJwtUtilisateur convertisseur = new ConvertisseurJwtUtilisateur(utilisateurs, executeur);
 
         // Le « resource server » ne lit que l'en-tête Authorization (DefaultBearerTokenResolver) :
         // il dispense alors de CSRF les seules requêtes Bearer. Le cookie est lu par CookieJwtFilter,
@@ -116,7 +120,7 @@ public class SecurityConfig {
                 // nouvelle connexion et renouvellerait le jeton CSRF : des requêtes parallèles du
                 // frontend seraient alors refusées. Le jeton reste donc stable pendant la session.
                 .csrf(csrf -> csrf.spa()
-                        .ignoringRequestMatchers("/api/auth/login", "/api/auth/register")
+                        .ignoringRequestMatchers("/api/auth/login", "/api/auth/logout", "/api/auth/register")
                         .sessionAuthenticationStrategy(new NullAuthenticatedSessionStrategy()))
                 .addFilterAfter(new CsrfCookieFilter(), CsrfFilter.class)
                 .addFilterBefore(new CookieJwtFilter(jwtDecoder, convertisseur), BearerTokenAuthenticationFilter.class)

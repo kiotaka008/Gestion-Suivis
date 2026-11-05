@@ -12,7 +12,6 @@ import com.gestionsuivis.backend.exception.ParametreInvalideException;
 import com.gestionsuivis.backend.support.Donnees;
 import org.junit.jupiter.api.Test;
 
-import java.math.BigDecimal;
 import java.time.Instant;
 import java.time.LocalDate;
 import java.util.List;
@@ -21,54 +20,40 @@ import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 
 /**
- * Indicateurs des bilans (taux de réalisation, taux de retard, écart d'heures),
+ * Indicateurs des bilans (taux de réalisation, taux de retard, durée moyenne),
  * périodes et évaluation du risque : logique pure, sans base de données.
  */
 class CalculsRapportTest {
 
     private static final LocalDate AUJOURDHUI = LocalDate.of(2025, 10, 15);
 
-    private final Utilisateur employe = Donnees.utilisateur("Tiavina", Role.EMPLOYE, null);
-    private final Projet projet = Donnees.projet("Refonte", employe, null);
+    private final Utilisateur employe = Donnees.utilisateur("Tiavina", Role.EMPLOYE);
+    private final Projet projet = Donnees.projet("Refonte", employe);
 
     // ---------------------------------------------------------------- indicateurs
 
     @Test
     void indicateurs_categoriesDisjointesEtTaux() {
         Activite terminee = Donnees.activite("A", projet, employe, StatutActivite.TERMINE, AUJOURDHUI.minusDays(3));
-        terminee.setDateFin(Instant.parse("2025-03-03T08:00:00Z"));
+        terminee.setDateModification(Instant.parse("2025-03-03T08:00:00Z")); // fin approximative
         List<Activite> activites = List.of(
                 terminee,
                 Donnees.activite("B", projet, employe, StatutActivite.EN_COURS, AUJOURDHUI.minusDays(1)), // en retard
                 Donnees.activite("C", projet, employe, StatutActivite.EN_COURS, AUJOURDHUI.plusDays(5)),
                 Donnees.activite("D", projet, employe, StatutActivite.A_FAIRE, null),
-                Donnees.activite("E", projet, employe, StatutActivite.EN_RETARD, AUJOURDHUI.plusDays(2)));
+                Donnees.activite("E", projet, employe, StatutActivite.BLOQUE, AUJOURDHUI.minusDays(2)),   // en retard
+                Donnees.activite("F", projet, employe, StatutActivite.BLOQUE, AUJOURDHUI.plusDays(2)));
 
         Indicateurs indicateurs = Indicateurs.calculer(activites, AUJOURDHUI);
 
-        assertThat(indicateurs.total()).isEqualTo(5);
+        assertThat(indicateurs.total()).isEqualTo(6);
         assertThat(indicateurs.terminees()).isEqualTo(1);
         assertThat(indicateurs.enRetard()).isEqualTo(2);
         assertThat(indicateurs.enCours()).isEqualTo(1);
-        assertThat(indicateurs.aFaire()).isEqualTo(1);
-        assertThat(indicateurs.tauxRealisation()).isEqualTo(20.0);
-        assertThat(indicateurs.tauxRetard()).isEqualTo(40.0);
+        assertThat(indicateurs.aFaire()).isEqualTo(2);
+        assertThat(indicateurs.tauxRealisation()).isEqualTo(16.7);
+        assertThat(indicateurs.tauxRetard()).isEqualTo(33.3);
         assertThat(indicateurs.dureeMoyenneJours()).isEqualTo(2.0);
-    }
-
-    @Test
-    void indicateurs_ecartEntreHeuresPrevuesEtReelles() {
-        List<Activite> activites = List.of(
-                Donnees.avecHeures(Donnees.activite("A", projet, employe, StatutActivite.EN_COURS, null), "10", "12.5"),
-                Donnees.avecHeures(Donnees.activite("B", projet, employe, StatutActivite.EN_COURS, null), "6", "4"),
-                Donnees.avecHeures(Donnees.activite("C", projet, employe, StatutActivite.EN_COURS, null), null, "1"));
-
-        Indicateurs indicateurs = Indicateurs.calculer(activites, AUJOURDHUI);
-
-        assertThat(indicateurs.heuresPrevues()).isEqualByComparingTo(new BigDecimal("16"));
-        assertThat(indicateurs.heuresReelles()).isEqualByComparingTo(new BigDecimal("17.5"));
-        assertThat(indicateurs.ecartHeures()).isEqualByComparingTo(new BigDecimal("1.5"));
-        assertThat(indicateurs.tauxEcartHeures()).isEqualTo(9.4);
     }
 
     @Test
@@ -77,7 +62,6 @@ class CalculsRapportTest {
 
         assertThat(indicateurs.tauxRealisation()).isZero();
         assertThat(indicateurs.tauxRetard()).isZero();
-        assertThat(indicateurs.tauxEcartHeures()).isNull();
         assertThat(indicateurs.dureeMoyenneJours()).isNull();
     }
 
@@ -151,6 +135,6 @@ class CalculsRapportTest {
     void graphiques_repartitionsAuxLibellesDuFrontend() {
         assertThat(Graphiques.prioritesActivites(List.of()).labels()).containsExactly("Urgent", "Haute", "Moyenne", "Basse");
         assertThat(Graphiques.statutsProjets(List.of(projet), AUJOURDHUI).labels())
-                .containsExactly("En cours", "Terminés", "En attente", "En retard", "Annulés");
+                .containsExactly("En cours", "Terminés", "En attente", "En retard", "Archivés");
     }
 }

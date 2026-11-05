@@ -5,15 +5,15 @@ import com.gestionsuivis.backend.dto.utilisateur.UtilisateurResponse;
 import com.gestionsuivis.backend.entity.Priorite;
 import com.gestionsuivis.backend.entity.StatutActivite;
 
-import java.math.BigDecimal;
 import java.time.Instant;
 import java.time.LocalDate;
 import java.util.UUID;
 
 /**
  * Activité renvoyée par l'API, au format {@code Activity} du frontend
- * ({@code src/types/models.ts}), complété par le nom du projet, la date de
- * début, les heures prévues et réelles et l'indicateur de retard.
+ * ({@code src/types/models.ts}), complété par le nom du projet, la date de début et
+ * l'indicateur de retard. {@code completedAt} est approximatif (dernière modification
+ * d'une activité terminée : le schéma ne conserve pas de date d'achèvement).
  */
 public record ActiviteResponse(
         UUID id,
@@ -28,8 +28,6 @@ public record ActiviteResponse(
         UtilisateurResponse assignee,
         LocalDate startDate,
         LocalDate dueDate,
-        BigDecimal plannedHours,
-        BigDecimal actualHours,
         @JsonProperty("isOverdue") boolean isOverdue,
         Instant completedAt,
         Instant createdAt,

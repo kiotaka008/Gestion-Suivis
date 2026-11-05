@@ -19,7 +19,6 @@ import org.junit.jupiter.api.Test;
 import tools.jackson.databind.JsonNode;
 import tools.jackson.databind.json.JsonMapper;
 
-import java.math.BigDecimal;
 import java.time.Instant;
 import java.time.LocalDate;
 import java.util.List;
@@ -74,7 +73,7 @@ class ContratFrontendJsonTest {
     void projet_contientLesChampsDuTypeProject() {
         ProjetResponse projet = new ProjetResponse(ID, "Refonte du site web", "Modernisation", StatutProjet.EN_COURS,
                 Priorite.HAUTE, 75, ID, utilisateur(), List.of(ID), List.of(utilisateur()),
-                LocalDate.parse("2025-03-01"), LocalDate.parse("2025-10-30"), null, null, false, CREATION, CREATION);
+                LocalDate.parse("2025-03-01"), LocalDate.parse("2025-10-30"), false, CREATION, CREATION);
 
         JsonNode json = arbre(projet);
 
@@ -90,21 +89,21 @@ class ContratFrontendJsonTest {
     void activite_contientLesChampsDuTypeActivity() {
         ActiviteResponse activite = new ActiviteResponse(ID, ID, "Projet", "Maquettes", null, StatutActivite.EN_COURS,
                 Priorite.MOYENNE, 40, ID, utilisateur(), null, LocalDate.parse("2025-10-15"),
-                new BigDecimal("8.00"), new BigDecimal("10.50"), true, null, CREATION, CREATION);
+                true, null, CREATION, CREATION);
 
         JsonNode json = arbre(activite);
 
         CHAMPS_ACTIVITY.forEach(champ -> assertThat(json.has(champ)).as(champ).isTrue());
         assertThat(json.get("status").asString()).isEqualTo("in_progress");
         assertThat(json.get("priority").asString()).isEqualTo("medium");
-        assertThat(json.get("plannedHours").asDouble()).isEqualTo(8.0);
+        assertThat(json.has("plannedHours")).isFalse();
         assertThat(json.get("isOverdue").asBoolean()).isTrue();
     }
 
     @Test
     void notification_contientLesChampsDuTypeNotification() {
         JsonNode json = arbre(new NotificationResponse(ID, TypeNotification.ECHEANCE, "Échéance proche", "Message",
-                false, CREATION, null, ID));
+                false, CREATION));
 
         CHAMPS_NOTIFICATION.forEach(champ -> assertThat(json.has(champ)).as(champ).isTrue());
         assertThat(json.get("type").asString()).isEqualTo("deadline");
@@ -119,15 +118,17 @@ class ContratFrontendJsonTest {
         assertThat(StatutProjet.depuisJson("completed")).isEqualTo(StatutProjet.TERMINE);
         assertThat(StatutActivite.depuisJson("todo")).isEqualTo(StatutActivite.A_FAIRE);
         assertThat(StatutActivite.depuisJson("done")).isEqualTo(StatutActivite.TERMINE);
+        assertThat(StatutActivite.depuisJson("blocked")).isEqualTo(StatutActivite.BLOQUE);
+        assertThat(StatutProjet.depuisJson("archived")).isEqualTo(StatutProjet.ARCHIVE);
         assertThat(Role.depuisJson("member")).isEqualTo(Role.EMPLOYE);
         assertThat(List.of(TypeNotification.values()).stream().map(TypeNotification::json))
                 .containsExactly("project", "activity", "comment", "deadline", "ai", "user");
     }
 
     @Test
-    void valeursSansEquivalent_sontRefuseesExplicitement() {
-        assertThatThrownBy(() -> StatutProjet.depuisJson("archived")).hasMessageContaining("archived");
-        assertThatThrownBy(() -> StatutActivite.depuisJson("blocked")).hasMessageContaining("blocked");
+    void valeursHorsSchema_sontRefuseesExplicitement() {
+        assertThatThrownBy(() -> StatutProjet.depuisJson("cancelled")).hasMessageContaining("cancelled");
+        assertThatThrownBy(() -> StatutActivite.depuisJson("overdue")).hasMessageContaining("overdue");
     }
 
     @Test
@@ -136,7 +137,12 @@ class ContratFrontendJsonTest {
                 ConnexionRequest.class);
 
         assertThat(requete.email()).isEqualTo("rickael@company.com");
+        assertThat(requete.organization()).isNull();
         assertThat(requete.toString()).doesNotContain("secret123");
+
+        ConnexionRequest avecOrganisation = JSON.readValue("{\"email\":\"a@b.c\",\"password\":\"x\","
+                + "\"organization\":\"demo-corp\"}", ConnexionRequest.class);
+        assertThat(avecOrganisation.organization()).isEqualTo("demo-corp");
     }
 
     @Test
@@ -174,7 +180,7 @@ class ContratFrontendJsonTest {
 
     @Test
     void patchPartielDActivite_parLaPersonneAffectee() {
-        ModifierActiviteRequest suivi = JSON.readValue("{\"status\":\"done\",\"progress\":100,\"actualHours\":6.5}",
+        ModifierActiviteRequest suivi = JSON.readValue("{\"status\":\"done\",\"progress\":100}",
                 ModifierActiviteRequest.class);
         ModifierActiviteRequest gestion = JSON.readValue("{\"title\":\"Autre titre\"}", ModifierActiviteRequest.class);
 
@@ -184,7 +190,7 @@ class ContratFrontendJsonTest {
 
     private static UtilisateurResponse utilisateur() {
         return new UtilisateurResponse(ID, "rickael@company.com", "Rickael Brayan", Role.EMPLOYE, null, true,
-                CREATION, null, null, null);
+                CREATION, ID, null);
     }
 
     private static JsonNode arbre(Object valeur) {

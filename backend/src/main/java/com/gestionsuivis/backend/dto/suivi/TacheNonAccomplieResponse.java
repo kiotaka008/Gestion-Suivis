@@ -3,7 +3,6 @@ package com.gestionsuivis.backend.dto.suivi;
 import com.gestionsuivis.backend.entity.Priorite;
 import com.gestionsuivis.backend.entity.StatutActivite;
 
-import java.math.BigDecimal;
 import java.time.Instant;
 import java.time.LocalDate;
 import java.util.UUID;
@@ -26,8 +25,6 @@ public record TacheNonAccomplieResponse(
         LocalDate dueDate,
         Long daysOverdue,
         long daysWithoutUpdate,
-        BigDecimal plannedHours,
-        BigDecimal actualHours,
         String reason,
         Instant updatedAt) {
 }

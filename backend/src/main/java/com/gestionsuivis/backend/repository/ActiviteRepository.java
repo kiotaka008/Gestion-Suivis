@@ -24,21 +24,18 @@ public interface ActiviteRepository extends JpaRepository<Activite, UUID>, JpaSp
 
     long countByResponsableId(UUID responsableId);
 
-    boolean existsByCreateurId(UUID createurId);
+    @EntityGraph(attributePaths = {"projet", "responsable"})
+    List<Activite> findByStatutNotAndDateEcheanceBefore(StatutActivite statut, LocalDate date);
 
     @EntityGraph(attributePaths = {"projet", "responsable"})
-    List<Activite> findByStatutInAndDateEcheanceBefore(Collection<StatutActivite> statuts, LocalDate date);
+    List<Activite> findByStatutNotAndDateEcheanceBetween(StatutActivite statut, LocalDate debut, LocalDate fin);
 
-    @EntityGraph(attributePaths = {"projet", "responsable"})
-    List<Activite> findByStatutInAndDateEcheanceBetween(Collection<StatutActivite> statuts,
-                                                        LocalDate debut, LocalDate fin);
-
-    /** Avancement moyen par projet ; une activité terminée compte pour 100 %. */
+    /** Avancement moyen d'un projet ; une activité terminée compte pour 100 %. {@code null} sans activité. */
     @Query("""
-            select a.projet.id, avg(case when a.statut = com.gestionsuivis.backend.entity.StatutActivite.TERMINE
-                                         then 100 else a.avancement end)
-            from Activite a where a.projet.id in :projets group by a.projet.id""")
-    List<Object[]> avancementMoyenParProjet(@Param("projets") Collection<UUID> projets);
+            select avg(case when a.statut = com.gestionsuivis.backend.entity.StatutActivite.TERMINE
+                            then 100 else a.avancement end)
+            from Activite a where a.projet.id = :projet""")
+    Double avancementMoyen(@Param("projet") UUID projetId);
 
     @Override
     @EntityGraph(attributePaths = {"projet", "responsable"})
@@ -47,4 +44,7 @@ public interface ActiviteRepository extends JpaRepository<Activite, UUID>, JpaSp
     @Override
     @EntityGraph(attributePaths = {"projet", "responsable"})
     List<Activite> findAll(Specification<Activite> specification);
+
+    @EntityGraph(attributePaths = {"projet", "responsable"})
+    List<Activite> findByProjetIdIn(Collection<UUID> projets);
 }

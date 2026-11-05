@@ -1,5 +1,6 @@
 package com.gestionsuivis.backend.security;
 
+import com.gestionsuivis.backend.config.ExecuteurOrganisation;
 import com.gestionsuivis.backend.controller.AuthController;
 import com.gestionsuivis.backend.dto.utilisateur.UtilisateurResponse;
 import com.gestionsuivis.backend.entity.Role;
@@ -39,8 +40,18 @@ import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.
  * données (le dépôt des utilisateurs et le service d'authentification sont simulés).
  */
 @WebMvcTest(controllers = AuthController.class)
-@Import({SecurityConfig.class, JwtService.class})
+@Import({SecurityConfig.class, JwtService.class, SecuriteHttpTest.Configuration.class})
 class SecuriteHttpTest {
+
+    /** Exécuteur d'organisation sans base : la transaction est simulée. */
+    @org.springframework.boot.test.context.TestConfiguration
+    static class Configuration {
+        @org.springframework.context.annotation.Bean
+        ExecuteurOrganisation executeurOrganisation() {
+            return new ExecuteurOrganisation(org.mockito.Mockito.mock(
+                    org.springframework.transaction.PlatformTransactionManager.class));
+        }
+    }
 
     private static final String CORPS_CONNEXION = "{\"email\":\"rickael@company.com\",\"password\":\"Admin@2026\"}";
     private static final String CORPS_MOT_DE_PASSE = "{\"currentPassword\":\"Admin@2026\",\"newPassword\":\"Nouveau@2026\"}";
@@ -62,7 +73,7 @@ class SecuriteHttpTest {
 
     @BeforeEach
     void initialiser() {
-        utilisateur = Donnees.utilisateur("Rickael", Role.ADMIN, null);
+        utilisateur = Donnees.utilisateur("Rickael", Role.ADMIN);
         utilisateur.setEmail("rickael@company.com");
         dto = new UtilisateurMapper().versDto(utilisateur);
         when(utilisateurs.findById(utilisateur.getId())).thenReturn(Optional.of(utilisateur));
@@ -188,6 +199,18 @@ class SecuriteHttpTest {
         Cookie xsrf = premier.getResponse().getCookie("XSRF-TOKEN");
 
         MvcResult resultat = mockMvc.perform(post("/api/auth/logout").cookie(xsrf).header("X-XSRF-TOKEN", xsrf.getValue()))
+                .andExpect(status().isNoContent())
+                .andReturn();
+
+        assertThat(resultat.getResponse().getHeaders(HttpHeaders.SET_COOKIE))
+                .anyMatch(c -> c.startsWith("access_token=") && c.contains("Max-Age=0"));
+    }
+
+    @Test
+    void deconnexion_sansJetonCsrf_effaceAussiLeCookie() throws Exception {
+        // Cas du frontend Vite (port 5173) qui appelle l'API (port 3000) sans en-tête X-XSRF-TOKEN.
+        MvcResult resultat = mockMvc.perform(post("/api/auth/logout")
+                        .cookie(new Cookie("access_token", jwtService.generer(utilisateur))))
                 .andExpect(status().isNoContent())
                 .andReturn();
 

@@ -25,6 +25,9 @@ public interface MessageConversationIaRepository extends JpaRepository<MessageCo
     Optional<MessageConversationIa> findFirstByConversationIdAndRoleOrderByDateCreationAsc(UUID conversationId,
                                                                                          RoleMessageIa role);
 
+    /** Dernier message : sa date tient lieu de date de mise à jour de la conversation. */
+    Optional<MessageConversationIa> findFirstByConversationIdOrderByDateCreationDesc(UUID conversationId);
+
     @Modifying
     @Query("delete from MessageConversationIa m where m.conversation.id = :conversation")
     void supprimerParConversation(@Param("conversation") UUID conversationId);

@@ -2,14 +2,12 @@ package com.gestionsuivis.backend.service;
 
 import com.gestionsuivis.backend.dto.PageResponse;
 import com.gestionsuivis.backend.dto.activite.ActiviteResponse;
-import com.gestionsuivis.backend.dto.activite.CommentaireResponse;
 import com.gestionsuivis.backend.dto.activite.CreerActiviteRequest;
-import com.gestionsuivis.backend.dto.activite.CreerCommentaireRequest;
 import com.gestionsuivis.backend.dto.activite.ModifierActiviteRequest;
 import com.gestionsuivis.backend.entity.Activite;
-import com.gestionsuivis.backend.entity.Commentaire;
 import com.gestionsuivis.backend.entity.Priorite;
 import com.gestionsuivis.backend.entity.Projet;
+import com.gestionsuivis.backend.entity.RoleMembreProjet;
 import com.gestionsuivis.backend.entity.StatutActivite;
 import com.gestionsuivis.backend.entity.TypeNotification;
 import com.gestionsuivis.backend.entity.Utilisateur;
@@ -19,7 +17,6 @@ import com.gestionsuivis.backend.exception.RequeteInvalideException;
 import com.gestionsuivis.backend.exception.RessourceIntrouvableException;
 import com.gestionsuivis.backend.mapper.ActiviteMapper;
 import com.gestionsuivis.backend.repository.ActiviteRepository;
-import com.gestionsuivis.backend.repository.CommentaireRepository;
 import com.gestionsuivis.backend.repository.ProjetRepository;
 import com.gestionsuivis.backend.repository.SpecificationsActivite;
 import com.gestionsuivis.backend.repository.UtilisateurRepository;
@@ -33,13 +30,12 @@ import org.springframework.transaction.annotation.Transactional;
 
 import java.time.Clock;
 import java.time.LocalDate;
-import java.util.List;
 import java.util.UUID;
 
 /**
- * Activités et tâches : CRUD, affectation, priorités, statuts, dates, heures et
- * commentaires. La personne affectée sans droit de gestion ne peut modifier que
- * le statut, l'avancement et les heures réelles de ses propres activités.
+ * Activités et tâches : CRUD, affectation, priorités, statuts et dates. La personne
+ * affectée sans droit de gestion ne peut modifier que le statut et l'avancement de
+ * ses propres activités. Chaque changement recalcule l'avancement du projet.
  */
 @Service
 @RequiredArgsConstructor
@@ -48,11 +44,12 @@ public class ActiviteService {
     private final ActiviteRepository activites;
     private final ProjetRepository projets;
     private final UtilisateurRepository utilisateurs;
-    private final CommentaireRepository commentaires;
     private final ActiviteMapper mapper;
     private final ControleAcces controle;
     private final UtilisateurCourant utilisateurCourant;
     private final NotificationService notifications;
+    private final CalculAvancement avancement;
+    private final AuditService audit;
     private final Clock horloge;
 
     @Transactional(readOnly = true)
@@ -88,7 +85,7 @@ public class ActiviteService {
             throw new AccesInterditException("Vous n'avez pas les droits nécessaires pour ajouter une activité à ce projet.");
         }
         if (projet.getStatut().estClos()) {
-            throw new ConflitMetierException("Impossible d'ajouter une activité à un projet terminé ou annulé.");
+            throw new ConflitMetierException("Impossible d'ajouter une activité à un projet terminé ou archivé.");
         }
         ProjetService.verifierDates(requete.startDate(), requete.dueDate());
 
@@ -99,15 +96,15 @@ public class ActiviteService {
         activite.setPriorite(requete.priority() == null ? Priorite.MOYENNE : requete.priority());
         activite.setDateDebut(requete.startDate());
         activite.setDateEcheance(requete.dueDate());
-        activite.setHeuresPrevues(requete.plannedHours());
         activite.setAvancement(requete.progress() == null ? 0 : requete.progress());
-        activite.setCreateur(utilisateurs.getReferenceById(u.id()));
         appliquerStatut(activite, requete.status() == null ? StatutActivite.A_FAIRE : requete.status());
         Utilisateur responsable = requete.assigneeId() == null ? null : utilisateurActifPourChamp(requete.assigneeId());
-        Activite enregistree = activites.save(activite);
+        Activite enregistree = activites.saveAndFlush(activite);
         if (responsable != null) {
             affecter(enregistree, responsable, u.id());
         }
+        avancement.recalculer(projet);
+        audit.journaliser(u.id(), "created", AuditService.ACTIVITE, enregistree.getId());
         return versDto(enregistree);
     }
 
@@ -121,8 +118,8 @@ public class ActiviteService {
                 throw new AccesInterditException();
             }
             if (!requete.limiteeAuSuivi()) {
-                throw new AccesInterditException("Vous pouvez uniquement modifier le statut, l'avancement "
-                        + "et les heures réelles de vos activités.");
+                throw new AccesInterditException("Vous pouvez uniquement modifier le statut et l'avancement "
+                        + "de vos activités.");
             }
         }
         ProjetService.verifierDates(requete.startDate() != null ? requete.startDate() : activite.getDateDebut(),
@@ -143,12 +140,6 @@ public class ActiviteService {
         if (requete.dueDate() != null) {
             activite.setDateEcheance(requete.dueDate());
         }
-        if (requete.plannedHours() != null) {
-            activite.setHeuresPrevues(requete.plannedHours());
-        }
-        if (requete.actualHours() != null) {
-            activite.setHeuresReelles(requete.actualHours());
-        }
         if (requete.progress() != null) {
             activite.setAvancement(requete.progress());
         }
@@ -163,46 +154,20 @@ public class ActiviteService {
                 notifierFin(activite, u.id());
             }
         }
+        avancement.recalculer(activite.getProjet());
         return versDto(activite);
     }
 
     @Transactional
     public void supprimer(UUID id) {
-        Activite activite = charger(id);
-        controle.verifierGererActivite(utilisateurCourant.obtenir(), activite);
-        commentaires.supprimerParActivites(List.of(id));
-        activites.delete(activite);
-    }
-
-    // ---------------------------------------------------------------- commentaires
-
-    @Transactional(readOnly = true)
-    public PageResponse<CommentaireResponse> listerCommentaires(UUID activiteId, Pageable pageable) {
-        Activite activite = charger(activiteId);
-        controle.verifierVoirActivite(utilisateurCourant.obtenir(), activite);
-        return PageResponse.de(commentaires.findByActiviteId(activiteId, pageable), mapper::versDto);
-    }
-
-    @Transactional
-    public CommentaireResponse commenter(UUID activiteId, CreerCommentaireRequest requete) {
         UtilisateurConnecte u = utilisateurCourant.obtenir();
-        Activite activite = charger(activiteId);
-        controle.verifierVoirActivite(u, activite);
-        Commentaire commentaire = new Commentaire();
-        commentaire.setActivite(activite);
-        commentaire.setAuteur(utilisateurs.getReferenceById(u.id()));
-        commentaire.setContenu(requete.content().trim());
-        Commentaire enregistre = commentaires.save(commentaire);
-
-        String message = "Nouveau commentaire sur l'activité « " + activite.getTitre() + " ».";
-        notifications.notifier(activite.getResponsable(), u.id(), TypeNotification.COMMENTAIRE, "Nouveau commentaire",
-                message, activite.getProjet().getId(), activite.getId());
-        Utilisateur chef = activite.getProjet().getChefDeProjet();
-        if (activite.getResponsable() == null || !chef.getId().equals(activite.getResponsable().getId())) {
-            notifications.notifier(chef, u.id(), TypeNotification.COMMENTAIRE, "Nouveau commentaire",
-                    message, activite.getProjet().getId(), activite.getId());
-        }
-        return mapper.versDto(enregistre);
+        Activite activite = charger(id);
+        controle.verifierGererActivite(u, activite);
+        Projet projet = activite.getProjet();
+        activites.delete(activite);
+        activites.flush();
+        avancement.recalculer(projet);
+        audit.journaliser(u.id(), "deleted", AuditService.ACTIVITE, id);
     }
 
     // ---------------------------------------------------------------- utilitaires
@@ -215,31 +180,27 @@ public class ActiviteService {
         return mapper.versDto(activite, LocalDate.now(horloge));
     }
 
-    /** Statut terminé : avancement à 100 % et date de fin ; sinon la date de fin est effacée. */
-    private void appliquerStatut(Activite activite, StatutActivite statut) {
+    /** Statut terminé : avancement à 100 %. */
+    private static void appliquerStatut(Activite activite, StatutActivite statut) {
         activite.setStatut(statut);
         if (statut == StatutActivite.TERMINE) {
             activite.setAvancement(100);
-            activite.setDateFin(horloge.instant());
-        } else {
-            activite.setDateFin(null);
         }
     }
 
     /** Affecte l'activité, ajoute la personne aux membres du projet et la notifie. */
     private void affecter(Activite activite, Utilisateur responsable, UUID auteurId) {
         activite.setResponsable(responsable);
-        activite.getProjet().getMembres().add(responsable);
+        activite.getProjet().ajouterMembre(responsable, RoleMembreProjet.MEMBRE);
         notifications.notifier(responsable, auteurId, TypeNotification.ACTIVITE, "Nouvelle activité affectée",
                 "L'activité « " + activite.getTitre() + " » du projet « " + activite.getProjet().getNom()
-                        + " » vous a été affectée.", activite.getProjet().getId(), activite.getId());
+                        + " » vous a été affectée.");
     }
 
     private void notifierFin(Activite activite, UUID auteurId) {
         notifications.notifier(activite.getProjet().getChefDeProjet(), auteurId, TypeNotification.ACTIVITE,
                 "Activité terminée", "L'activité « " + activite.getTitre() + " » du projet « "
-                        + activite.getProjet().getNom() + " » est terminée.",
-                activite.getProjet().getId(), activite.getId());
+                        + activite.getProjet().getNom() + " » est terminée.");
     }
 
     private Utilisateur utilisateurActifPourChamp(UUID id) {

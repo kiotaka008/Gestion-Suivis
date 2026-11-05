@@ -4,18 +4,17 @@ import com.fasterxml.jackson.annotation.JsonCreator;
 import com.fasterxml.jackson.annotation.JsonValue;
 
 /**
- * Statuts d'activité du cahier des charges.
+ * Statuts d'activité : type PostgreSQL {@code activity_status}
+ * ({@code todo | in_progress | done | blocked}), valeurs identiques au frontend.
  * <p>
- * Correspondance JSON : {@code todo}, {@code in_progress} et {@code done} existent
- * déjà dans le frontend ; {@code overdue} est une valeur proposée pour EN_RETARD.
- * La valeur frontend {@code blocked} n'a pas d'équivalent et est refusée.
+ * Le retard n'est pas un statut : il est calculé (échéance dépassée et activité non terminée).
  */
 public enum StatutActivite {
 
     A_FAIRE("todo"),
     EN_COURS("in_progress"),
     TERMINE("done"),
-    EN_RETARD("overdue");
+    BLOQUE("blocked");
 
     private final String json;
 
@@ -31,5 +30,11 @@ public enum StatutActivite {
     @JsonCreator
     public static StatutActivite depuisJson(String valeur) {
         return ValeursJson.depuis(StatutActivite.class, values(), StatutActivite::json, valeur);
+    }
+
+    public static class Convertisseur extends ConvertisseurEnumPg<StatutActivite> {
+        public Convertisseur() {
+            super(StatutActivite.class, StatutActivite::json);
+        }
     }
 }

@@ -4,8 +4,8 @@ import com.fasterxml.jackson.annotation.JsonCreator;
 import com.fasterxml.jackson.annotation.JsonValue;
 
 /**
- * Priorités du cahier des charges, valeurs JSON identiques au frontend
- * ({@code low | medium | high | urgent}).
+ * Priorités : type PostgreSQL {@code item_priority} ({@code low | medium | high | urgent}),
+ * valeurs identiques au frontend.
  */
 public enum Priorite {
 
@@ -28,5 +28,11 @@ public enum Priorite {
     @JsonCreator
     public static Priorite depuisJson(String valeur) {
         return ValeursJson.depuis(Priorite.class, values(), Priorite::json, valeur);
+    }
+
+    public static class Convertisseur extends ConvertisseurEnumPg<Priorite> {
+        public Convertisseur() {
+            super(Priorite.class, Priorite::json);
+        }
     }
 }

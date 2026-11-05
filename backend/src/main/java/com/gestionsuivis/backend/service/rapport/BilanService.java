@@ -4,13 +4,10 @@ import com.gestionsuivis.backend.dto.rapport.BilanResponse;
 import com.gestionsuivis.backend.dto.rapport.GraphiqueSeries;
 import com.gestionsuivis.backend.dto.rapport.ResumeProjet;
 import com.gestionsuivis.backend.entity.Activite;
-import com.gestionsuivis.backend.entity.Departement;
 import com.gestionsuivis.backend.entity.Projet;
 import com.gestionsuivis.backend.entity.Utilisateur;
-import com.gestionsuivis.backend.exception.AccesInterditException;
 import com.gestionsuivis.backend.exception.RessourceIntrouvableException;
 import com.gestionsuivis.backend.repository.ActiviteRepository;
-import com.gestionsuivis.backend.repository.DepartementRepository;
 import com.gestionsuivis.backend.repository.ProjetRepository;
 import com.gestionsuivis.backend.repository.SpecificationsActivite;
 import com.gestionsuivis.backend.repository.SpecificationsProjet;
@@ -18,9 +15,7 @@ import com.gestionsuivis.backend.repository.UtilisateurRepository;
 import com.gestionsuivis.backend.security.ControleAcces;
 import com.gestionsuivis.backend.security.UtilisateurCourant;
 import com.gestionsuivis.backend.security.UtilisateurConnecte;
-import com.gestionsuivis.backend.service.CalculAvancement;
 import lombok.RequiredArgsConstructor;
-import org.springframework.data.jpa.domain.Specification;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
@@ -38,7 +33,7 @@ import java.util.Map;
 import java.util.UUID;
 
 /**
- * Bilans par employé, département, projet ou global, sur une période, calculés
+ * Bilans par employé, projet ou global, sur une période, calculés
  * côté backend sur les seules données visibles par l'utilisateur connecté.
  * <p>
  * Une activité appartient à la période si son échéance y tombe, ou, sans
@@ -53,8 +48,6 @@ public class BilanService {
     private final ActiviteRepository activites;
     private final ProjetRepository projets;
     private final UtilisateurRepository utilisateurs;
-    private final DepartementRepository departements;
-    private final CalculAvancement avancement;
     private final ControleAcces controle;
     private final UtilisateurCourant utilisateurCourant;
     private final Clock horloge;
@@ -81,23 +74,6 @@ public class BilanService {
     }
 
     @Transactional(readOnly = true)
-    public BilanResponse departement(UUID id, String codePeriode, LocalDate debut, LocalDate fin) {
-        UtilisateurConnecte u = utilisateurCourant.obtenir();
-        Departement departement = departements.findById(id)
-                .orElseThrow(() -> new RessourceIntrouvableException("Département", id));
-        if (!(u.estAdmin() || (u.estManager() && u.estDansDepartement(id)))) {
-            throw new AccesInterditException("Le bilan d'un département est réservé à son responsable et aux administrateurs.");
-        }
-        BilanResponse.Periode periode = Periodes.resoudre(codePeriode, debut, fin, aujourdHui());
-        Specification<Activite> duDepartement = (racine, requete, cb) ->
-                cb.equal(racine.get("projet").get("departement").get("id"), id);
-        List<Activite> activitesScope = activites.findAll(duDepartement);
-        List<Projet> projetsScope = projets.findAll(SpecificationsProjet.filtres(null, null, null, id, null));
-        return construire(new BilanResponse.Perimetre("department", id, departement.getNom()), periode,
-                activitesScope, projetsScope);
-    }
-
-    @Transactional(readOnly = true)
     public BilanResponse projet(UUID id, String codePeriode, LocalDate debut, LocalDate fin) {
         UtilisateurConnecte u = utilisateurCourant.obtenir();
         Projet projet = projets.findById(id).orElseThrow(() -> new RessourceIntrouvableException("Projet", id));
@@ -119,18 +95,16 @@ public class BilanService {
                 .filter(a -> Periodes.contient(periode, dateReference(a, zone)))
                 .toList();
         Indicateurs indicateurs = Indicateurs.calculer(dansPeriode, aujourdHui);
-        Map<UUID, Integer> avancements = avancement.parProjet(projetsScope.stream().map(Projet::getId).toList());
 
         List<ResumeProjet> resume = projetsScope.stream()
                 .sorted(Comparator.comparing(Projet::getNom, String.CASE_INSENSITIVE_ORDER))
-                .map(p -> new ResumeProjet(p.getId(), p.getNom(), avancements.getOrDefault(p.getId(), 0), p.getStatut()))
+                .map(p -> new ResumeProjet(p.getId(), p.getNom(), p.getAvancement(), p.getStatut()))
                 .toList();
 
         return new BilanResponse(perimetre, periode,
                 indicateurs.total(), indicateurs.terminees(), indicateurs.enCours(), indicateurs.aFaire(),
                 indicateurs.enRetard(), indicateurs.tauxRealisation(), indicateurs.tauxRetard(),
-                indicateurs.heuresPrevues(), indicateurs.heuresReelles(), indicateurs.ecartHeures(),
-                indicateurs.tauxEcartHeures(), indicateurs.dureeMoyenneJours(),
+                indicateurs.dureeMoyenneJours(),
                 projetsScope.size(), projetsScope.stream().filter(p -> p.estEnRetard(aujourdHui)).count(),
                 evolutionMensuelle(activitesScope, periode, zone),
                 Graphiques.statutsProjets(projetsScope, aujourdHui),
@@ -152,8 +126,8 @@ public class BilanService {
                     valeurs[0]++;
                 }
             }
-            if (activite.getDateFin() != null) {
-                long[] valeurs = compte.get(YearMonth.from(activite.getDateFin().atZone(zone)));
+            if (activite.dateFin() != null) {
+                long[] valeurs = compte.get(YearMonth.from(activite.dateFin().atZone(zone)));
                 if (valeurs != null) {
                     valeurs[1]++;
                 }

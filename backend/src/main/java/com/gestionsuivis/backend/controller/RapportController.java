@@ -45,13 +45,6 @@ public class RapportController {
         return bilans.utilisateur(id, period, from, to);
     }
 
-    @GetMapping("/api/reports/departments/{id}")
-    public BilanResponse departement(@PathVariable UUID id, @RequestParam(required = false) String period,
-                                     @RequestParam(required = false) @DateTimeFormat(iso = DateTimeFormat.ISO.DATE) LocalDate from,
-                                     @RequestParam(required = false) @DateTimeFormat(iso = DateTimeFormat.ISO.DATE) LocalDate to) {
-        return bilans.departement(id, period, from, to);
-    }
-
     @GetMapping("/api/reports/projects/{id}")
     public BilanResponse projet(@PathVariable UUID id, @RequestParam(required = false) String period,
                                 @RequestParam(required = false) @DateTimeFormat(iso = DateTimeFormat.ISO.DATE) LocalDate from,

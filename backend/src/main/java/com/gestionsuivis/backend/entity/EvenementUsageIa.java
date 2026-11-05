@@ -8,16 +8,16 @@ import lombok.Getter;
 import lombok.NoArgsConstructor;
 import lombok.Setter;
 import org.hibernate.annotations.CreationTimestamp;
+import org.hibernate.annotations.TenantId;
 import org.hibernate.annotations.UuidGenerator;
 
+import java.math.BigDecimal;
 import java.time.Instant;
 import java.util.UUID;
 
 /**
- * Trace de consommation d'un appel au service IA (jetons, modèle, opération).
+ * Trace de consommation d'un appel au service IA : table {@code ai_usage_events}.
  * Aucun contenu de message n'y est stocké.
- * <p>
- * PROVISOIRE : structure supposée de {@code ai_usage_events}.
  */
 @Getter
 @Setter
@@ -26,21 +26,25 @@ import java.util.UUID;
 @Table(name = "ai_usage_events")
 public class EvenementUsageIa {
 
+    public static final String STATUT_SUCCES = "success";
+
     @Id
     @UuidGenerator
     @Column(name = "id", nullable = false, updatable = false)
     private UUID id;
 
+    @TenantId
+    @Column(name = "organization_id", nullable = false, updatable = false)
+    private UUID organisationId;
+
     @Column(name = "user_id", nullable = false)
     private UUID utilisateurId;
 
-    @Column(name = "conversation_id")
-    private UUID conversationId;
+    /** Route du backend à l'origine de l'appel (ex. {@code /api/ai/chat}, comme dans le jeu de données officiel). */
+    @Column(name = "endpoint", nullable = false, length = 255)
+    private String endpoint;
 
-    @Column(name = "operation", nullable = false, length = 50)
-    private String operation;
-
-    @Column(name = "model", length = 100)
+    @Column(name = "model", nullable = false, length = 100)
     private String modele;
 
     @Column(name = "prompt_tokens", nullable = false)
@@ -49,8 +53,11 @@ public class EvenementUsageIa {
     @Column(name = "completion_tokens", nullable = false)
     private int jetonsReponse;
 
-    @Column(name = "total_tokens", nullable = false)
-    private int jetonsTotal;
+    @Column(name = "cost_usd", nullable = false, precision = 12, scale = 6)
+    private BigDecimal coutUsd = BigDecimal.ZERO;
+
+    @Column(name = "status", nullable = false, length = 30)
+    private String statut = STATUT_SUCCES;
 
     @CreationTimestamp
     @Column(name = "created_at", nullable = false, updatable = false)

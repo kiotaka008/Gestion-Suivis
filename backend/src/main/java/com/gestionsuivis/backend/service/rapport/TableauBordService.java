@@ -14,7 +14,6 @@ import com.gestionsuivis.backend.repository.SpecificationsActivite;
 import com.gestionsuivis.backend.repository.SpecificationsProjet;
 import com.gestionsuivis.backend.security.UtilisateurCourant;
 import com.gestionsuivis.backend.security.UtilisateurConnecte;
-import com.gestionsuivis.backend.service.CalculAvancement;
 import lombok.RequiredArgsConstructor;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
@@ -30,8 +29,6 @@ import java.time.temporal.TemporalAdjusters;
 import java.util.ArrayList;
 import java.util.Comparator;
 import java.util.List;
-import java.util.Map;
-import java.util.UUID;
 
 /**
  * Statistiques du tableau de bord, sur le périmètre de l'utilisateur connecté.
@@ -50,7 +47,6 @@ public class TableauBordService {
     private final ActiviteRepository activites;
     private final ProjetMapper projetMapper;
     private final ActiviteMapper activiteMapper;
-    private final CalculAvancement avancement;
     private final UtilisateurCourant utilisateurCourant;
     private final Clock horloge;
 
@@ -68,7 +64,6 @@ public class TableauBordService {
                 .sorted(Comparator.comparing(Projet::getDateEcheance))
                 .limit(TAILLE_LISTES)
                 .toList();
-        Map<UUID, Integer> avancements = avancement.parProjet(echeances.stream().map(Projet::getId).toList());
 
         return new TableauBordResponse(
                 projetsVisibles.size(),
@@ -82,7 +77,7 @@ public class TableauBordService {
                 Graphiques.statutsProjets(projetsVisibles, aujourdHui),
                 tachesParSemaine(activitesVisibles, aujourdHui, zone),
                 echeances.stream()
-                        .map(p -> projetMapper.versDto(p, avancements.getOrDefault(p.getId(), 0), aujourdHui))
+                        .map(p -> projetMapper.versDto(p, aujourdHui))
                         .toList(),
                 activitesVisibles.stream()
                         .sorted(Comparator.comparing(Activite::getDateModification,
@@ -127,8 +122,8 @@ public class TableauBordService {
             LocalDate fin = debut.plusDays(6);
             Instant finInstant = fin.plusDays(1).atStartOfDay(zone).toInstant();
             libelles.add("Sem " + debut.get(IsoFields.WEEK_OF_WEEK_BASED_YEAR));
-            terminees.add(activitesVisibles.stream().filter(a -> a.getDateFin() != null
-                    && dansIntervalle(a.getDateFin().atZone(zone).toLocalDate(), debut, fin)).count());
+            terminees.add(activitesVisibles.stream().filter(a -> a.dateFin() != null
+                    && dansIntervalle(a.dateFin().atZone(zone).toLocalDate(), debut, fin)).count());
             enCours.add(activitesVisibles.stream().filter(a -> a.getStatut() == StatutActivite.EN_COURS
                     && a.getDateCreation() != null && a.getDateCreation().isBefore(finInstant)).count());
             enRetard.add(activitesVisibles.stream().filter(a -> !a.estTerminee() && a.getDateEcheance() != null

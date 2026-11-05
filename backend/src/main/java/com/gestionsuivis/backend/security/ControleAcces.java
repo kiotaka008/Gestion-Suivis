@@ -13,16 +13,19 @@ import java.util.UUID;
 
 /**
  * Règles d'autorisation métier, appliquées dans les services (jamais seulement
- * dans les contrôleurs ni dans React).
+ * dans les contrôleurs ni dans React). Toutes les données sont d'abord limitées à
+ * l'organisation de l'utilisateur ({@code @TenantId} + RLS) ; à l'intérieur :
  * <ul>
- *   <li><b>ADMIN</b> : toutes les données ;</li>
- *   <li><b>MANAGER</b> : projets et activités de son département, projets dont il est
- *       chef ou membre, activités qui lui sont affectées ;</li>
- *   <li><b>EMPLOYE</b> : ses propres activités (consultation et mise à jour du statut,
- *       de l'avancement et des heures réelles), projets dont il est chef ou membre.</li>
+ *   <li><b>ADMIN</b> : toutes les données de l'organisation ;</li>
+ *   <li><b>MANAGER</b> : consultation de tous les projets, activités et utilisateurs de
+ *       l'organisation, création de projets, gestion des projets dont il est chef ;</li>
+ *   <li><b>EMPLOYE</b> ({@code member}) : projets dont il est chef ou membre ou dans lesquels
+ *       une activité lui est affectée, ses propres activités (mise à jour du statut et de
+ *       l'avancement).</li>
  * </ul>
  * Un chef de projet gère son projet quel que soit son rôle.
- * Un identifiant modifié dans l'URL donne 403 (« accès interdit »).
+ * Un identifiant modifié dans l'URL donne 403 (« accès interdit ») ou 404 s'il
+ * appartient à une autre organisation.
  */
 @Component
 @RequiredArgsConstructor
@@ -34,16 +37,12 @@ public class ControleAcces {
     // ---------------------------------------------------------------- projets
 
     public boolean peutGererProjet(UtilisateurConnecte u, Projet projet) {
-        if (u.estAdmin() || memeId(u.id(), projet.getChefDeProjet())) {
-            return true;
-        }
-        return u.estManager() && projet.getDepartement() != null
-                && u.estDansDepartement(projet.getDepartement().getId());
+        return u.estAdmin() || memeId(u.id(), projet.getChefDeProjet());
     }
 
     public boolean peutVoirProjet(UtilisateurConnecte u, Projet projet) {
-        return peutGererProjet(u, projet)
-                || projets.existsByIdAndMembresId(projet.getId(), u.id())
+        return peutGererProjet(u, projet) || u.estManager()
+                || projets.existsByIdAndMembresUtilisateurId(projet.getId(), u.id())
                 || activites.existsByProjetIdAndResponsableId(projet.getId(), u.id());
     }
 
@@ -77,7 +76,7 @@ public class ControleAcces {
     }
 
     public boolean peutVoirActivite(UtilisateurConnecte u, Activite activite) {
-        return peutGererActivite(u, activite) || estResponsableActivite(u, activite);
+        return peutGererActivite(u, activite) || u.estManager() || estResponsableActivite(u, activite);
     }
 
     public void verifierVoirActivite(UtilisateurConnecte u, Activite activite) {
@@ -95,11 +94,7 @@ public class ControleAcces {
     // ---------------------------------------------------------------- utilisateurs
 
     public boolean peutVoirUtilisateur(UtilisateurConnecte u, Utilisateur cible) {
-        if (u.estAdmin() || u.id().equals(cible.getId())) {
-            return true;
-        }
-        return u.estManager() && cible.getDepartement() != null
-                && u.estDansDepartement(cible.getDepartement().getId());
+        return u.estAdmin() || u.estManager() || u.id().equals(cible.getId());
     }
 
     public void verifierVoirUtilisateur(UtilisateurConnecte u, Utilisateur cible) {

@@ -111,7 +111,7 @@ class GlobalExceptionHandlerTest {
         }
         HttpMessageNotReadableException ex = null;
         try {
-            JSON.readValue("{\"status\":\"archived\"}", Corps.class);
+            JSON.readValue("{\"status\":\"cancelled\"}", Corps.class);
         } catch (RuntimeException erreur) {
             ex = new HttpMessageNotReadableException("JSON parse error", erreur, new MockHttpInputMessage(new byte[0]));
         }
@@ -121,7 +121,7 @@ class GlobalExceptionHandlerTest {
 
         assertThat(corps.errors()).hasSize(1);
         assertThat(corps.errors().getFirst().field()).isEqualTo("status");
-        assertThat(corps.errors().getFirst().message()).contains("archived").contains("active").contains("cancelled");
+        assertThat(corps.errors().getFirst().message()).contains("cancelled").contains("active").contains("archived");
     }
 
     // ---------------------------------------------------------------- 400

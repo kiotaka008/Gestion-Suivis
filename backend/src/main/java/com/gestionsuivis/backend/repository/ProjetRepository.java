@@ -13,19 +13,17 @@ import java.util.UUID;
 
 public interface ProjetRepository extends JpaRepository<Projet, UUID>, JpaSpecificationExecutor<Projet> {
 
-    boolean existsByIdAndMembresId(UUID projetId, UUID utilisateurId);
-
-    long countByDepartementId(UUID departementId);
+    boolean existsByIdAndMembresUtilisateurId(UUID projetId, UUID utilisateurId);
 
     boolean existsByChefDeProjetId(UUID utilisateurId);
 
-    List<Projet> findByMembresId(UUID utilisateurId);
+    List<Projet> findByMembresUtilisateurId(UUID utilisateurId);
 
     @Override
-    @EntityGraph(attributePaths = {"chefDeProjet", "departement"})
+    @EntityGraph(attributePaths = "chefDeProjet")
     Page<Projet> findAll(Specification<Projet> specification, Pageable pageable);
 
     @Override
-    @EntityGraph(attributePaths = {"chefDeProjet", "departement"})
+    @EntityGraph(attributePaths = "chefDeProjet")
     List<Projet> findAll(Specification<Projet> specification);
 }
