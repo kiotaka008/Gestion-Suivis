@@ -34,8 +34,12 @@ class Settings(BaseSettings):
         description="Clé API partagée entre le backend principal et ce service IA",
     )
 
-    # ─── Google Gemini ────────────────────────────────────
-    gemini_api_key: str = Field(..., min_length=10)
+    # ─── Groq (fournisseur IA actuel) ─────────────────────
+    groq_api_key: str = Field(default="", min_length=0)
+    groq_model: str = "llama-3.3-70b-versatile"
+
+    # ─── Google Gemini (gardé pour compatibilité) ─────────
+    gemini_api_key: str = Field(default="", min_length=0)
     gemini_model: str = "gemini-3.8-flash"
     gemini_max_tokens: int = Field(default=2048, ge=1, le=16384)
     gemini_temperature: float = Field(default=0.7, ge=0.0, le=2.0)
@@ -46,7 +50,7 @@ class Settings(BaseSettings):
     # ─── Rate limit ───────────────────────────────────────
     rate_limit_per_minute: int = Field(default=30, ge=1, le=1000)
 
-    # ─── Mode Mock (pour la démo sans Gemini) ─────────────
+    # ─── Mode Mock (pour la démo sans IA) ─────────────────
     use_mock: bool = False
 
     @field_validator("allowed_origins")
