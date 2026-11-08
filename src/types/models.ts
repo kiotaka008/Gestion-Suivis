@@ -12,6 +12,8 @@ export interface User {
   avatarUrl?: string;
   isActive: boolean;
   createdAt: string;
+  organizationId?: string;
+  lastLoginAt?: string;
 }
 
 export interface Project {
@@ -27,6 +29,7 @@ export interface Project {
   members?: User[];
   startDate?: string;
   dueDate?: string;
+  isOverdue?: boolean;
   createdAt: string;
   updatedAt: string;
 }
@@ -34,6 +37,7 @@ export interface Project {
 export interface Activity {
   id: string;
   projectId: string;
+  projectName?: string;
   title: string;
   description?: string;
   status: ActivityStatus;
@@ -41,15 +45,69 @@ export interface Activity {
   progress: number;
   assigneeId?: string;
   assignee?: User;
+  startDate?: string;
   dueDate?: string;
+  isOverdue?: boolean;
+  completedAt?: string;
   createdAt: string;
   updatedAt: string;
 }
 
+export type NotificationType = 'project' | 'activity' | 'comment' | 'deadline' | 'ai' | 'user';
+
 export interface Notification {
   id: string;
-  type: 'project' | 'activity' | 'comment' | 'deadline' | 'ai' | 'user';
+  type: NotificationType;
   title: string;
   message?: string;
   isRead: boolean;
   createdAt: string;
+}
+
+/** Séries de graphique : { labels, datasets: [{ label, data }] }. */
+export interface ChartSeries {
+  labels: string[];
+  datasets: { label: string; data: number[] }[];
+}
+
+/** Répartition simple : { labels, data }. */
+export interface Distribution {
+  labels: string[];
+  data: number[];
+}
+
+/** Réponse de GET /api/dashboard/stats. */
+export interface DashboardStats {
+  totalProjects: number;
+  activeProjects: number;
+  completedProjects: number;
+  overdueProjects: number;
+  totalActivities: number;
+  completedActivities: number;
+  overdueActivities: number;
+  monthlyEvolution: ChartSeries;
+  statusDistribution: Distribution;
+  tasksPerWeek: ChartSeries;
+  upcomingDeadlines: Project[];
+  recentActivities: Activity[];
+}
+
+/** Réponse de GET /api/reports/overview. */
+export interface Report {
+  scope: { type: string; id?: string; name?: string | null };
+  period: { code: string; from: string; to: string };
+  totalActivities: number;
+  completedActivities: number;
+  inProgressActivities: number;
+  todoActivities: number;
+  overdueActivities: number;
+  completionRate: number;
+  overdueRate: number;
+  averageCompletionDays?: number;
+  totalProjects: number;
+  overdueProjects: number;
+  monthlyEvolution: ChartSeries;
+  statusDistribution: Distribution;
+  priorityDistribution: Distribution;
+  projectsSummary: { id: string; name: string; progress: number; status: ProjectStatus }[];
+}

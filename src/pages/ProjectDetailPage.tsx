@@ -1,4 +1,4 @@
-import { useMemo, useState } from 'react';
+import { useEffect, useState } from 'react';
 import { useParams, useNavigate, Link } from 'react-router-dom';
 import {
   ArrowLeft,
@@ -23,8 +23,11 @@ import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '../co
 import { EmptyState } from '../components/ui/EmptyState';
 import { ConfirmDialog } from '../components/ui/ConfirmDialog';
 import type { Activity, ActivityStatus, Priority, ProjectStatus, Role } from '../types/models';
-import { mockProjects } from '../mocks/projects';
-import { mockActivities } from '../mocks/activities';
+import { Alert } from '../components/ui/Alert';
+import { Spinner } from '../components/ui/Spinner';
+import { projectService } from '../services/projectService';
+import { ApiError } from '../services/ApiError';
+import type { Project } from '../types/models';
 import { ROUTES } from '../constants/routes';
 
 function getStatusVariant(status: ProjectStatus) {
@@ -140,20 +143,56 @@ export function ProjectDetailPage() {
   const [deleteOpen, setDeleteOpen] = useState(false);
   const [isDeleting, setIsDeleting] = useState(false);
 
-  const project = useMemo(() => mockProjects.find((p) => p.id === id), [id]);
+  const [project, setProject] = useState<Project | null>(null);
+  const [activities, setActivities] = useState<Activity[]>([]);
+  const [isLoading, setIsLoading] = useState(true);
+  const [error, setError] = useState<string | null>(null);
 
-  const activities = useMemo<Activity[]>(
-    () => mockActivities.filter((a) => a.projectId === id),
-    [id]
-  );
+  // Projet et activités visibles, chargés depuis le backend (404/403 → « introuvable »).
+  useEffect(() => {
+    if (!id) return;
+    let annule = false;
+    Promise.all([projectService.getById(id), projectService.activities(id)])
+      .then(([projet, liste]) => {
+        if (annule) return;
+        setProject(projet);
+        setActivities(liste);
+      })
+      .catch((err) => {
+        if (annule) return;
+        setProject(null);
+        if (err instanceof ApiError && err.status !== 404) setError(err.message);
+      })
+      .finally(() => {
+        if (!annule) setIsLoading(false);
+      });
+    return () => {
+      annule = true;
+    };
+  }, [id]);
 
   const handleDelete = async () => {
+    if (!project) return;
     setIsDeleting(true);
-    await new Promise((r) => setTimeout(r, 500));
-    setIsDeleting(false);
-    setDeleteOpen(false);
-    navigate(ROUTES.PROJECTS);
+    try {
+      await projectService.remove(project.id);
+      setDeleteOpen(false);
+      navigate(ROUTES.PROJECTS);
+    } catch (err) {
+      setDeleteOpen(false);
+      setError(err instanceof ApiError ? err.message : 'Suppression impossible.');
+    } finally {
+      setIsDeleting(false);
+    }
   };
+
+  if (isLoading) {
+    return (
+      <Container className="flex justify-center py-16">
+        <Spinner size="lg" />
+      </Container>
+    );
+  }
 
   if (!project) {
     return (
@@ -161,7 +200,7 @@ export function ProjectDetailPage() {
         <EmptyState
           icon={<AlertTriangle className="h-6 w-6" />}
           title="Projet introuvable"
-          description="Le projet demandé n'existe pas ou a été supprimé."
+          description={error ?? "Le projet demandé n'existe pas ou a été supprimé."}
           action={
             <Link to={ROUTES.PROJECTS}>
               <Button variant="outline" leftIcon={<ArrowLeft className="h-4 w-4" />}>
@@ -183,6 +222,12 @@ export function ProjectDetailPage() {
         <ArrowLeft className="h-4 w-4" />
         Retour aux projets
       </Link>
+
+      {error && (
+        <Alert variant="danger" className="mb-4">
+          {error}
+        </Alert>
+      )}
 
       <div className="flex flex-col gap-4 border-b border-border pb-6 lg:flex-row lg:items-start lg:justify-between">
         <div className="min-w-0 flex-1">
@@ -417,22 +462,18 @@ export function ProjectDetailPage() {
                   <Badge variant="info">Responsable</Badge>
                 </div>
               )}
-              {project.memberIds
-                .filter((mid) => mid !== project.ownerId)
-                .map((memberId) => (
+              {(project.members ?? [])
+                .filter((membre) => membre.id !== project.ownerId)
+                .map((membre) => (
                   <div
-                    key={memberId}
+                    key={membre.id}
                     className="flex items-center justify-between rounded-lg border border-border p-3"
                   >
                     <div className="flex items-center gap-3">
-                      <Avatar name={`Membre ${memberId.slice(-1)}`} />
+                      <Avatar name={membre.name} src={membre.avatarUrl} />
                       <div>
-                        <p className="text-sm font-medium text-foreground">
-                          Membre {memberId.slice(-1)}
-                        </p>
-                        <p className="text-xs text-muted-foreground">
-                          membre{memberId.slice(-1)}@company.com
-                        </p>
+                        <p className="text-sm font-medium text-foreground">{membre.name}</p>
+                        <p className="text-xs text-muted-foreground">{membre.email}</p>
                       </div>
                     </div>
                     <Badge variant="muted">Membre</Badge>

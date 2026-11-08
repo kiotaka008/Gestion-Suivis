@@ -2,6 +2,7 @@ package com.gestionsuivis.backend.service;
 
 import com.gestionsuivis.backend.config.ExecuteurOrganisation;
 import com.gestionsuivis.backend.dto.auth.ChangerMotDePasseRequest;
+import com.gestionsuivis.backend.dto.auth.ConnexionGoogleRequest;
 import com.gestionsuivis.backend.dto.auth.ConnexionRequest;
 import com.gestionsuivis.backend.dto.auth.InscriptionRequest;
 import com.gestionsuivis.backend.dto.utilisateur.UtilisateurResponse;
@@ -19,6 +20,7 @@ import com.gestionsuivis.backend.repository.UtilisateurRepository;
 import com.gestionsuivis.backend.security.JwtService;
 import com.gestionsuivis.backend.security.SecuriteProperties;
 import com.gestionsuivis.backend.security.UtilisateurCourant;
+import com.gestionsuivis.backend.security.VerificateurGoogle;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.security.crypto.password.PasswordEncoder;
@@ -56,6 +58,7 @@ public class AuthService {
     private final SecuriteProperties securite;
     private final AuditService audit;
     private final Clock horloge;
+    private final VerificateurGoogle google;
 
     /** Hash BCrypt factice : rend la durée d'un échec identique, que l'email existe ou non. */
     private volatile String hashFactice;
@@ -93,11 +96,63 @@ public class AuthService {
             throw new RequeteInvalideException("organization",
                     "Ce compte existe dans plusieurs organisations : précisez l'organisation.");
         }
-        Utilisateur utilisateur = executeur.ecrire(valides.getFirst().getOrganisationId(), () -> {
-            Utilisateur connecte = utilisateurs.findById(valides.getFirst().getId())
+        return finaliserConnexion(valides.getFirst(), "login");
+    }
+
+    /**
+     * Connexion avec un compte Google (jeton d'identité Google Identity Services).
+     * L'email Google vérifié doit correspondre à un compte actif. S'il n'existe pas et que
+     * l'inscription libre est ouverte, un compte {@code member} est créé dans l'organisation
+     * (unique, ou désignée par {@code organization}).
+     */
+    public ResultatConnexion connecterAvecGoogle(ConnexionGoogleRequest requete) {
+        if (!google.estActive()) {
+            throw new AccesInterditException("La connexion avec Google n'est pas configurée sur le serveur.");
+        }
+        VerificateurGoogle.IdentiteGoogle identite = google.verifier(requete.credential())
+                .orElseThrow(() -> new IdentifiantsInvalidesException("Connexion Google refusée : jeton invalide ou email non vérifié."));
+        String email = normaliser(identite.email());
+        List<UUID> candidates = organisationsCandidates(requete.organization());
+        List<Utilisateur> comptes = new ArrayList<>();
+        for (UUID organisation : candidates) {
+            executeur.lire(organisation, () -> utilisateurs.findByEmailIgnoreCase(email)).ifPresent(comptes::add);
+        }
+        List<Utilisateur> actifs = comptes.stream().filter(Utilisateur::isActif).toList();
+        if (actifs.size() > 1) {
+            throw new RequeteInvalideException("organization",
+                    "Ce compte existe dans plusieurs organisations : précisez l'organisation.");
+        }
+        if (actifs.size() == 1) {
+            return finaliserConnexion(actifs.getFirst(), "login.google");
+        }
+        if (!comptes.isEmpty() || !securite.inscriptionOuverte() || candidates.size() != 1) {
+            log.info("Connexion Google refusée : aucun compte actif pour cet email");
+            throw new IdentifiantsInvalidesException("Aucun compte actif n'est associé à cet email Google. "
+                    + "Contactez un administrateur.");
+        }
+        Utilisateur cree = executeur.ecrire(candidates.getFirst(), () -> {
+            Utilisateur nouveau = new Utilisateur();
+            nouveau.setNom(identite.nom().trim());
+            nouveau.setEmail(email);
+            // Mot de passe aléatoire inconnu : le compte se connecte uniquement avec Google
+            // (ou après réinitialisation par un administrateur).
+            nouveau.setMotDePasseHash(encodeur.encode(UUID.randomUUID().toString().replace("-", "")
+                    + UUID.randomUUID().toString().replace("-", "")));
+            nouveau.setRole(Role.EMPLOYE);
+            nouveau.setActif(true);
+            return utilisateurs.saveAndFlush(nouveau);
+        });
+        log.info("Compte {} créé à la première connexion Google", cree.getId());
+        return finaliserConnexion(cree, "login.google");
+    }
+
+    /** Met à jour la date de dernière connexion, journalise et émet le JWT. */
+    private ResultatConnexion finaliserConnexion(Utilisateur compte, String action) {
+        Utilisateur utilisateur = executeur.ecrire(compte.getOrganisationId(), () -> {
+            Utilisateur connecte = utilisateurs.findById(compte.getId())
                     .orElseThrow(IdentifiantsInvalidesException::new);
             connecte.setDerniereConnexion(horloge.instant());
-            audit.journaliser(connecte.getId(), "login", AuditService.UTILISATEUR, connecte.getId());
+            audit.journaliser(connecte.getId(), action, AuditService.UTILISATEUR, connecte.getId());
             return connecte;
         });
         log.info("Connexion réussie de l'utilisateur {}", utilisateur.getId());

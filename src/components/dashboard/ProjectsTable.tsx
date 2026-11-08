@@ -11,7 +11,6 @@ import {
   TableRow,
 } from '../ui/Table';
 import type { Project, ProjectStatus } from '../../types/models';
-import { mockProjects } from '../../mocks/projects';
 
 function getStatusVariant(status: ProjectStatus) {
   switch (status) {
@@ -39,8 +38,8 @@ function getStatusLabel(status: ProjectStatus) {
   }
 }
 
-export function ProjectsTable() {
-  const projects = mockProjects.slice(0, 5) as Project[];
+export function ProjectsTable({ projects: tous }: { projects: Project[] }) {
+  const projects = tous.slice(0, 5);
 
   return (
     <Card>

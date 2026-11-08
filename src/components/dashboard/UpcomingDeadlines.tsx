@@ -2,7 +2,7 @@ import { Calendar, Flag } from 'lucide-react';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '../ui/Card';
 import { Badge } from '../ui/Badge';
 import type { Priority } from '../../types/models';
-import { mockProjects } from '../../mocks/projects';
+import type { Project } from '../../types/models';
 
 function getPriorityVariant(priority: Priority) {
   switch (priority) {
@@ -36,8 +36,8 @@ function formatDate(date?: string) {
   return d.toLocaleDateString('fr-FR', { day: '2-digit', month: 'short' });
 }
 
-export function UpcomingDeadlines() {
-  const upcoming = [...mockProjects]
+export function UpcomingDeadlines({ projects }: { projects: Project[] }) {
+  const upcoming = [...projects]
     .filter((p) => p.dueDate && p.status !== 'completed' && p.status !== 'archived')
     .sort((a, b) => new Date(a.dueDate!).getTime() - new Date(b.dueDate!).getTime())
     .slice(0, 4);

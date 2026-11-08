@@ -1,4 +1,4 @@
-import api from './api';
+import api, { lireTout } from './api';
 import type { Activity } from '../types/models';
 import type { PaginatedResponse, PaginationParams } from '../types/api';
 
@@ -6,6 +6,11 @@ export const activityService = {
   async list(params?: PaginationParams): Promise<PaginatedResponse<Activity>> {
     const { data } = await api.get<PaginatedResponse<Activity>>('/activities', { params });
     return data;
+  },
+
+  /** Toutes les activités visibles par l'utilisateur connecté. */
+  listAll(): Promise<Activity[]> {
+    return lireTout<Activity>('/activities', { sortBy: 'createdAt', sortOrder: 'desc' });
   },
 
   async getById(id: string): Promise<Activity> {

@@ -1,4 +1,5 @@
 import { useState, type FormEvent } from 'react';
+import { ApiError } from '../../services/ApiError';
 import { Modal } from '../ui/Modal';
 import { Input } from '../ui/Input';
 import { Textarea } from '../ui/Textarea';
@@ -42,6 +43,9 @@ export function CreateActivityModal({
   const [isSubmitting, setIsSubmitting] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
+  // Les projets peuvent arriver après l'ouverture de la page : premier projet par défaut.
+  const projetChoisi = form.projectId || defaultProjectId || projects[0]?.id || '';
+
   const handleClose = () => {
     if (isSubmitting) return;
     setForm(initialState);
@@ -57,7 +61,7 @@ export function CreateActivityModal({
       setError("Le titre de l'activité est obligatoire.");
       return;
     }
-    if (!form.projectId) {
+    if (!projetChoisi) {
       setError('Veuillez sélectionner un projet.');
       return;
     }
@@ -67,7 +71,7 @@ export function CreateActivityModal({
       await onCreate({
         title: form.title.trim(),
         description: form.description.trim() || undefined,
-        projectId: form.projectId,
+        projectId: projetChoisi,
         priority: form.priority,
         dueDate: form.dueDate || undefined,
         status: 'todo',
@@ -75,8 +79,8 @@ export function CreateActivityModal({
       });
       setForm(initialState);
       onClose();
-    } catch {
-      setError("Impossible de créer l'activité. Veuillez réessayer.");
+    } catch (err) {
+      setError(err instanceof ApiError ? err.message : "Impossible de créer l'activité. Veuillez réessayer.");
     } finally {
       setIsSubmitting(false);
     }
@@ -117,7 +121,7 @@ export function CreateActivityModal({
 
         <Select
           label="Projet"
-          value={form.projectId}
+          value={projetChoisi}
           onChange={(e) => setForm({ ...form, projectId: e.target.value })}
           options={projects.map((p) => ({ value: p.id, label: p.name }))}
         />

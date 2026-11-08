@@ -10,4 +10,8 @@ public class IdentifiantsInvalidesException extends RuntimeException {
     public IdentifiantsInvalidesException() {
         super(MessagesErreur.IDENTIFIANTS_INVALIDES);
     }
+
+    public IdentifiantsInvalidesException(String message) {
+        super(message);
+    }
 }

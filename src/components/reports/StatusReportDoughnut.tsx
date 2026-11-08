@@ -3,9 +3,9 @@ import { useMemo } from 'react';
 import { useTheme } from '../../hooks/useTheme';
 import { getChartColors } from '../../utils/chartSetup';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '../ui/Card';
-import { reportsStatusDistribution } from '../../mocks/reports';
+import type { Distribution } from '../../types/models';
 
-export function StatusReportDoughnut() {
+export function StatusReportDoughnut({ data: reportsStatusDistribution }: { data: Distribution }) {
   const { theme } = useTheme();
   const isDark =
     theme === 'dark' ||
@@ -19,7 +19,7 @@ export function StatusReportDoughnut() {
     datasets: [
       {
         data: reportsStatusDistribution.data,
-        backgroundColor: [colors.info, colors.success, colors.warning, colors.danger],
+        backgroundColor: [colors.info, colors.success, colors.warning, colors.danger, '#94a3b8'],
         borderColor: isDark ? '#1e293b' : '#ffffff',
         borderWidth: 3,
         hoverOffset: 8,

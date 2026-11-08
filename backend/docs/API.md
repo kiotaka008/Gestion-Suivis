@@ -15,15 +15,17 @@ Variables d'environnement (aucune n'est obligatoire pour démarrer, sauf la base
 | `JWT_EXPIRATION_MINUTES` | durée du jeton (5-1440) | 60 |
 | `COOKIE_SECURE` | `true` en HTTPS (production) | `false` |
 | `CORS_ALLOWED_ORIGINS` | origines supplémentaires, séparées par des virgules | — (5173 et 3000 toujours autorisés) |
-| `AUTH_REGISTRATION_ENABLED` | ouvre `POST /api/auth/register` | `false` |
+| `AUTH_REGISTRATION_ENABLED` | ouvre `POST /api/auth/register` (et la création de compte à la 1re connexion Google) | `false` |
+| `GOOGLE_CLIENT_ID` | identifiant client OAuth « Application Web » pour « Se connecter avec Google » | absent → connexion Google désactivée |
+| `SERVER_PORT` | port de l'API | `3000` |
 | `AI_SERVICE_URL` | adresse du service FastAPI | absent → IA « indisponible » |
 | `AI_INTERNAL_API_KEY` | clé `X-Internal-API-Key` (16 caractères min.) | absent → IA « indisponible » |
 | `AI_CONNECT_TIMEOUT_SECONDS` / `AI_READ_TIMEOUT_SECONDS` / `AI_HEALTH_TIMEOUT_SECONDS` | délais IA | 5 / 60 / 3 |
 | `ECHEANCES_CRON` | planification du traitement des échéances | `0 0 7 * * *` |
 | `JPA_SHOW_SQL` | affiche les requêtes SQL | `false` |
 
-Ports de développement : React (Vite) 5173, Spring Boot 8080, FastAPI 8000, PostgreSQL 5432.
-Recommandé côté frontend : proxy Vite `'/api' → 'http://localhost:8080'` et `VITE_API_URL=/api`.
+Ports de développement : React (Vite) 5173, Spring Boot 3000, FastAPI 8000, PostgreSQL 5432.
+Recommandé côté frontend : proxy Vite `'/api' → 'http://localhost:3000'` et `VITE_API_URL=/api`.
 
 Base de données : schéma officiel PostgreSQL 15+ (branche `develop`, dossier
 `ProjectManager_SaaS_Database`), voir [SCHEMA_BASE.md](SCHEMA_BASE.md). Le backend ne crée ni
@@ -96,6 +98,8 @@ Légende frontend : **U** utilisé par React, **D** défini dans un service Reac
 | Méthode | URL | Corps | Réponse | Rôles | Front |
 |---|---|---|---|---|---|
 | POST | `/login` | `{ email, password, organization? }` | 200 `{ user }` + cookie ; 401 ; 422 (`organization` requis si l'email existe dans plusieurs organisations) | public | U |
+| POST | `/google` | `{ credential, organization? }` (jeton d'identité Google Identity Services) | 200 `{ user }` + cookie ; 401 ; 403 si non configuré ; 422 | public | U |
+| GET | `/google/config` | — | `{ enabled, clientId }` | public | U |
 | POST | `/logout` | — | 204, cookie effacé | public | U |
 | GET | `/me` | — | 200 `User` ; 401 | connecté | U |
 | GET | `/csrf` | — | 204 + cookie `XSRF-TOKEN` | public | N |
@@ -199,27 +203,41 @@ et ne refait jamais un appel en échec.
 # Connexion (enregistre le cookie)
 curl -i -c cookies.txt -H "Content-Type: application/json" \
      -d '{"email":"admin@gestion-suivis.com","password":"Admin@2026"}' \
-     http://localhost:8080/api/auth/login
+     http://localhost:3000/api/auth/login
 
 # Lecture avec le cookie
-curl -b cookies.txt "http://localhost:8080/api/projects?page=1&perPage=20&sortBy=dueDate&sortOrder=asc"
+curl -b cookies.txt "http://localhost:3000/api/projects?page=1&perPage=20&sortBy=dueDate&sortOrder=asc"
 
 # Écriture avec le cookie : récupérer XSRF-TOKEN puis l'envoyer en en-tête
-curl -c cookies.txt -b cookies.txt http://localhost:8080/api/auth/csrf
+curl -c cookies.txt -b cookies.txt http://localhost:3000/api/auth/csrf
 curl -b cookies.txt -H "X-XSRF-TOKEN: <valeur du cookie XSRF-TOKEN>" -H "Content-Type: application/json" \
      -d '{"name":"Migration cloud","priority":"high","dueDate":"2025-12-31"}' \
-     http://localhost:8080/api/projects
+     http://localhost:3000/api/projects
 
 # Variante Postman / scripts : jeton Bearer (pas de CSRF)
-curl -H "Authorization: Bearer <jeton>" http://localhost:8080/api/suivi/taches-non-accomplies
+curl -H "Authorization: Bearer <jeton>" http://localhost:3000/api/suivi/taches-non-accomplies
 ```
 
-## 6. Adaptations attendues côté frontend (non réalisées par le backend)
+## 6. Intégration avec le frontend (réalisée)
 
-1. Proxy Vite `/api` → `http://localhost:8080` et `VITE_API_URL=/api` (sinon `withXSRFToken: true`).
-2. Afficher le `message` renvoyé par l'API (notamment « Email ou mot de passe incorrect. » au lieu de « session expirée »).
-3. Traiter le 400 (`BAD_REQUEST`) ; lire `errors[{ field, message }]` sur le 422 (déjà prévu).
-4. Les statuts `archived` / `blocked` du frontend sont désormais acceptés (alignés sur la base).
-5. Ajouter le mot de passe initial dans `CreateUserModal` ; `assigneeId`, `startDate` dans `CreateActivityModal`.
-6. Brancher les pages sur l'API (au lieu de `src/mocks`) et activer `ProtectedRoute`.
-7. Si un même email existe dans plusieurs organisations, envoyer `organization` (slug) à la connexion.
+- Le frontend appelle `/api` via le proxy Vite (`VITE_API_URL=/api`, `VITE_BACKEND_URL=http://localhost:3000`) :
+  même origine pour le navigateur, donc cookie de session et jeton CSRF fonctionnent sans CORS.
+- Toutes les pages utilisent l'API (`src/services/*`) : projets, activités, utilisateurs,
+  notifications, tableau de bord, rapports, profil, mot de passe, inscription, assistant IA
+  (le `conversationId` est conservé d'un message à l'autre).
+- Routes protégées (`ProtectedRoute`), déconnexion réelle depuis l'en-tête, messages d'erreur
+  du backend affichés tels quels, champ « Organisation » proposé quand la connexion le demande.
+- Restent côté frontend : `src/mocks/aiMessages.ts` (type des messages et questions suggérées).
+
+## 7. Connexion avec Google
+
+1. Google Cloud Console → *API et services* → *Identifiants* → *Créer un ID client OAuth*,
+   type **Application Web**, origine JavaScript autorisée : `http://localhost:5173`
+   (ajouter l'URL de production le moment venu).
+2. Copier l'identifiant client dans `backend/.env` : `GOOGLE_CLIENT_ID=...apps.googleusercontent.com`.
+3. Le frontend lit cette valeur via `GET /api/auth/google/config` et affiche le bouton Google ;
+   le jeton reçu de Google est envoyé à `POST /api/auth/google`, vérifié par le backend
+   (signature, émetteur, audience, expiration, email vérifié), puis le cookie de session est posé.
+
+L'email Google doit correspondre à un compte actif. Sans compte, la connexion est refusée,
+sauf si `AUTH_REGISTRATION_ENABLED=true` : un compte `member` est alors créé.

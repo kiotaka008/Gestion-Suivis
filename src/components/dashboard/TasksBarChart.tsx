@@ -3,9 +3,9 @@ import { useMemo } from 'react';
 import { useTheme } from '../../hooks/useTheme';
 import { getChartColors } from '../../utils/chartSetup';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '../ui/Card';
-import { tasksPerWeek } from '../../mocks/dashboardStats';
+import type { ChartSeries } from '../../types/models';
 
-export function TasksBarChart() {
+export function TasksBarChart({ tasksPerWeek }: { tasksPerWeek: ChartSeries }) {
   const { theme } = useTheme();
   const isDark =
     theme === 'dark' ||

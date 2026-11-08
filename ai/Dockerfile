@@ -1,7 +1,7 @@
 ﻿# ============================================================
 # Dockerfile - AI Service (Gestion Suivis)
 # ============================================================
-# Image optimisee pour le service IA FastAPI + Gemini
+# Image optimisee pour le service IA FastAPI + Groq
 # Multi-stage build pour reduire la taille finale
 # ============================================================
 

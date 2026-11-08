@@ -20,7 +20,9 @@ import { UsersFilters, type ViewMode } from '../components/users/UsersFilters';
 import { UserCard } from '../components/users/UserCard';
 import { CreateUserModal } from '../components/users/CreateUserModal';
 import type { User, Role } from '../types/models';
-import { mockUsers } from '../mocks/users';
+import { Alert } from '../components/ui/Alert';
+import { userService, type CreateUserPayload } from '../services/userService';
+import { ApiError } from '../services/ApiError';
 
 function getRoleVariant(role: Role) {
   switch (role) {
@@ -51,13 +53,25 @@ export function UsersPage() {
   const [isCreateOpen, setIsCreateOpen] = useState(false);
   const [deleteTarget, setDeleteTarget] = useState<User | null>(null);
   const [isDeleting, setIsDeleting] = useState(false);
+  const [error, setError] = useState<string | null>(null);
 
+  // Liste réservée aux ADMIN et MANAGER (403 sinon : le message du backend est affiché).
   useEffect(() => {
-    const timer = setTimeout(() => {
-      setUsers(mockUsers);
-      setIsLoading(false);
-    }, 800);
-    return () => clearTimeout(timer);
+    let annule = false;
+    userService
+      .listAll()
+      .then((liste) => {
+        if (!annule) setUsers(liste);
+      })
+      .catch((err) => {
+        if (!annule) setError(err instanceof ApiError ? err.message : 'Chargement des utilisateurs impossible.');
+      })
+      .finally(() => {
+        if (!annule) setIsLoading(false);
+      });
+    return () => {
+      annule = true;
+    };
   }, []);
 
   const filtered = useMemo(() => {
@@ -78,29 +92,35 @@ export function UsersPage() {
     return result;
   }, [users, search, role, status, sort]);
 
-  const handleCreate = (data: Partial<User>) => {
-    const newUser: User = {
-      id: `u-${Date.now()}`,
-      name: data.name ?? 'Sans nom',
-      email: data.email ?? '',
-      role: data.role ?? 'member',
-      isActive: data.isActive ?? true,
-      createdAt: new Date().toISOString(),
-    };
-    setUsers((prev) => [newUser, ...prev]);
+  // Les erreurs remontent jusqu'au formulaire, qui affiche le message du backend.
+  const handleCreate = async (data: CreateUserPayload) => {
+    const cree = await userService.create(data);
+    setUsers((prev) => [cree, ...prev]);
   };
 
-  const handleToggleActive = (user: User) => {
-    setUsers((prev) => prev.map((u) => (u.id === user.id ? { ...u, isActive: !u.isActive } : u)));
+  const handleToggleActive = async (user: User) => {
+    setError(null);
+    try {
+      if (user.isActive) await userService.deactivate(user.id);
+      else await userService.activate(user.id);
+      setUsers((prev) => prev.map((u) => (u.id === user.id ? { ...u, isActive: !u.isActive } : u)));
+    } catch (err) {
+      setError(err instanceof ApiError ? err.message : 'Modification impossible.');
+    }
   };
 
   const handleDeleteConfirm = async () => {
     if (!deleteTarget) return;
     setIsDeleting(true);
-    await new Promise((r) => setTimeout(r, 400));
-    setUsers((prev) => prev.filter((u) => u.id !== deleteTarget.id));
-    setIsDeleting(false);
-    setDeleteTarget(null);
+    try {
+      await userService.remove(deleteTarget.id);
+      setUsers((prev) => prev.filter((u) => u.id !== deleteTarget.id));
+    } catch (err) {
+      setError(err instanceof ApiError ? err.message : 'Suppression impossible.');
+    } finally {
+      setIsDeleting(false);
+      setDeleteTarget(null);
+    }
   };
 
   return (
@@ -110,6 +130,12 @@ export function UsersPage() {
         description="Gérez les membres de votre organisation."
         actions={<Button leftIcon={<Plus className="h-4 w-4" />} onClick={() => setIsCreateOpen(true)}>Nouvel utilisateur</Button>}
       />
+
+      {error && (
+        <Alert variant="danger" className="mt-6">
+          {error}
+        </Alert>
+      )}
 
       <div className="mt-6">
         <UsersFilters

@@ -1,4 +1,4 @@
-﻿import os
+import os
 from collections.abc import Iterator
 from unittest.mock import AsyncMock, patch
 
@@ -7,8 +7,8 @@ from fastapi import FastAPI
 from fastapi.testclient import TestClient
 
 os.environ.setdefault("INTERNAL_API_KEY", "test-internal-key-1234567890")
-os.environ.setdefault("GEMINI_API_KEY", "test-gemini-key-1234567890")
-os.environ.setdefault("GEMINI_MODEL", "gemini-3.8-flash")
+os.environ.setdefault("GROQ_API_KEY", "test-groq-key-1234567890")
+os.environ.setdefault("GROQ_MODEL", "llama-3.3-70b-versatile")
 os.environ.setdefault("ENVIRONMENT", "development")
 os.environ.setdefault("DEBUG", "true")
 os.environ.setdefault("LOG_LEVEL", "WARNING")
@@ -42,7 +42,7 @@ def mock_llm_response():
     return {
         "content": '{"result": "mocked response"}',
         "usage": TokenUsage(prompt_tokens=10, completion_tokens=20, total_tokens=30),
-        "model": "gemini-3.8-flash",
+        "model": "llama-3.3-70b-versatile",
     }
 
 

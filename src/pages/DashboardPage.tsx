@@ -2,6 +2,7 @@ import { useState, useEffect } from 'react';
 import { FolderKanban, Clock, CheckCircle2, AlertTriangle } from 'lucide-react';
 import { Container } from '../components/ui/Container';
 import { PageHeader } from '../components/ui/PageHeader';
+import { Alert } from '../components/ui/Alert';
 import { StatCard } from '../components/dashboard/StatCard';
 import { ProjectsChart } from '../components/dashboard/ProjectsChart';
 import { StatusDoughnut } from '../components/dashboard/StatusDoughnut';
@@ -11,20 +12,41 @@ import { UpcomingDeadlines } from '../components/dashboard/UpcomingDeadlines';
 import { ProjectsTable } from '../components/dashboard/ProjectsTable';
 import { DashboardSkeleton } from '../components/dashboard/DashboardSkeleton';
 import { useAuth } from '../hooks/useAuth';
+import { reportService } from '../services/reportService';
+import { projectService } from '../services/projectService';
+import { ApiError } from '../services/ApiError';
+import type { DashboardStats, Project } from '../types/models';
 
 export function DashboardPage() {
   const { user } = useAuth();
   const firstName = user?.name?.split(' ')[0] ?? 'vous';
 
+  const [stats, setStats] = useState<DashboardStats | null>(null);
+  const [recentProjects, setRecentProjects] = useState<Project[]>([]);
   const [isLoading, setIsLoading] = useState(true);
+  const [error, setError] = useState<string | null>(null);
 
-  // Simulation du chargement initial (à remplacer par l'appel API)
+  // Statistiques calculées par le backend sur le périmètre de l'utilisateur connecté.
   useEffect(() => {
-    const timer = setTimeout(() => {
-      setIsLoading(false);
-    }, 1000); // 1 seconde de délai
-
-    return () => clearTimeout(timer);
+    let annule = false;
+    Promise.all([
+      reportService.dashboard(),
+      projectService.list({ page: 1, perPage: 5, sortBy: 'updatedAt', sortOrder: 'desc' }),
+    ])
+      .then(([statistiques, projets]) => {
+        if (annule) return;
+        setStats(statistiques);
+        setRecentProjects(projets.data);
+      })
+      .catch((err) => {
+        if (!annule) setError(err instanceof ApiError ? err.message : 'Chargement du tableau de bord impossible.');
+      })
+      .finally(() => {
+        if (!annule) setIsLoading(false);
+      });
+    return () => {
+      annule = true;
+    };
   }, []);
 
   return (
@@ -34,67 +56,70 @@ export function DashboardPage() {
         description="Voici un aperçu de l'avancement de vos projets."
       />
 
+      {error && (
+        <Alert variant="danger" className="mt-6">
+          {error}
+        </Alert>
+      )}
+
       {isLoading ? (
         <div className="mt-6">
           <DashboardSkeleton />
         </div>
-      ) : (
+      ) : stats ? (
         <>
           {/* Cartes de statistiques */}
           <div className="mt-6 grid gap-4 md:grid-cols-2 lg:grid-cols-4">
             <StatCard
               label="Total projets"
-              value={15}
+              value={stats.totalProjects}
               icon={<FolderKanban className="h-6 w-6" />}
-              trend={{ value: 12, isPositive: true }}
             />
             <StatCard
               label="Projets en cours"
-              value={8}
+              value={stats.activeProjects}
               icon={<Clock className="h-6 w-6" />}
               variant="success"
-              trend={{ value: 5, isPositive: true }}
             />
             <StatCard
               label="Projets terminés"
-              value={5}
+              value={stats.completedProjects}
               icon={<CheckCircle2 className="h-6 w-6" />}
               variant="success"
             />
             <StatCard
               label="Projets en retard"
-              value={2}
+              value={stats.overdueProjects}
               icon={<AlertTriangle className="h-6 w-6" />}
               variant="danger"
-              trend={{ value: 3, isPositive: false }}
             />
           </div>
 
           {/* Graphiques : Line + Doughnut */}
           <div className="mt-6 grid gap-6 lg:grid-cols-3">
             <div className="lg:col-span-2">
-              <ProjectsChart />
+              <ProjectsChart monthlyEvolution={stats.monthlyEvolution} />
             </div>
-            <StatusDoughnut />
+            <StatusDoughnut statusDistribution={stats.statusDistribution} />
           </div>
 
           {/* Graphique Bar */}
           <div className="mt-6">
-            <TasksBarChart />
+            <TasksBarChart tasksPerWeek={stats.tasksPerWeek} />
           </div>
 
           {/* Listes : Activités + Échéances */}
           <div className="mt-6 grid gap-6 lg:grid-cols-2">
-            <RecentActivities />
-            <UpcomingDeadlines />
+            <RecentActivities activities={stats.recentActivities} />
+            <UpcomingDeadlines projects={stats.upcomingDeadlines} />
           </div>
 
-          {/* Tableau des projets */}
+          {/* Tableau des projets récemment modifiés */}
           <div className="mt-6">
-            <ProjectsTable />
+            <ProjectsTable projects={recentProjects} />
           </div>
         </>
-      )}
+      ) : null}
     </Container>
   );
 }

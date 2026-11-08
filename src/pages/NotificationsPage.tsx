@@ -7,21 +7,45 @@ import { NotificationItem } from '../components/notifications/NotificationItem';
 import { NotificationsFilters } from '../components/notifications/NotificationsFilters';
 import { Skeleton } from '../components/ui/Skeleton';
 import type { Notification } from '../types/models';
-import { mockNotifications } from '../mocks/notifications';
+import { Alert } from '../components/ui/Alert';
+import { notificationService } from '../services/notificationService';
+import { ApiError } from '../services/ApiError';
 
 export function NotificationsPage() {
   const [notifications, setNotifications] = useState<Notification[]>([]);
   const [isLoading, setIsLoading] = useState(true);
   const [type, setType] = useState('all');
   const [status, setStatus] = useState('all');
+  const [error, setError] = useState<string | null>(null);
 
   useEffect(() => {
-    const timer = setTimeout(() => {
-      setNotifications(mockNotifications);
-      setIsLoading(false);
-    }, 800);
-    return () => clearTimeout(timer);
+    let annule = false;
+    notificationService
+      .listAll()
+      .then((liste) => {
+        if (!annule) setNotifications(liste);
+      })
+      .catch((err) => {
+        if (!annule) setError(err instanceof ApiError ? err.message : 'Chargement des notifications impossible.');
+      })
+      .finally(() => {
+        if (!annule) setIsLoading(false);
+      });
+    return () => {
+      annule = true;
+    };
   }, []);
+
+  /** Applique l'action côté backend, puis met à jour l'affichage. */
+  const executer = async (action: () => Promise<void>, miseAJour: () => void) => {
+    setError(null);
+    try {
+      await action();
+      miseAJour();
+    } catch (err) {
+      setError(err instanceof ApiError ? err.message : 'Action impossible.');
+    }
+  };
 
   const unreadCount = notifications.filter((n) => !n.isRead).length;
 
@@ -34,17 +58,23 @@ export function NotificationsPage() {
     return result;
   }, [notifications, type, status]);
 
-  const handleMarkAsRead = (notification: Notification) => {
-    setNotifications((prev) => prev.map((n) => (n.id === notification.id ? { ...n, isRead: true } : n)));
-  };
+  const handleMarkAsRead = (notification: Notification) =>
+    executer(
+      () => notificationService.markAsRead(notification.id),
+      () => setNotifications((prev) => prev.map((n) => (n.id === notification.id ? { ...n, isRead: true } : n)))
+    );
 
-  const handleMarkAllAsRead = () => {
-    setNotifications((prev) => prev.map((n) => ({ ...n, isRead: true })));
-  };
+  const handleMarkAllAsRead = () =>
+    executer(
+      () => notificationService.markAllAsRead(),
+      () => setNotifications((prev) => prev.map((n) => ({ ...n, isRead: true })))
+    );
 
-  const handleDelete = (notification: Notification) => {
-    setNotifications((prev) => prev.filter((n) => n.id !== notification.id));
-  };
+  const handleDelete = (notification: Notification) =>
+    executer(
+      () => notificationService.remove(notification.id),
+      () => setNotifications((prev) => prev.filter((n) => n.id !== notification.id))
+    );
 
   return (
     <Container className="py-6">
@@ -52,6 +82,12 @@ export function NotificationsPage() {
         title="Notifications"
         description={isLoading ? "Chargement..." : unreadCount > 0 ? `Vous avez ${unreadCount} notification${unreadCount > 1 ? 's' : ''} non lue${unreadCount > 1 ? 's' : ''}.` : 'Toutes vos notifications sont à jour.'}
       />
+
+      {error && (
+        <Alert variant="danger" className="mt-6">
+          {error}
+        </Alert>
+      )}
 
       <div className="mt-6">
         <NotificationsFilters type={type} onTypeChange={setType} status={status} onStatusChange={setStatus} onMarkAllAsRead={handleMarkAllAsRead} unreadCount={unreadCount} />

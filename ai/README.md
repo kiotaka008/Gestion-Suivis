@@ -6,7 +6,7 @@ Service IA interne pour la plateforme Gestion Suivis.
 
 
 
-Ce micro-service expose des endpoints REST permettant d'utiliser les capacités d'un LLM (Google Gemini) pour :
+Ce micro-service expose des endpoints REST permettant d'utiliser les capacités d'un LLM (Groq, modèle llama-3.3-70b-versatile) pour :
 
 
 
@@ -50,7 +50,7 @@ Service IA (FastAPI) - VOUS ÊTES ICI
 
 &#x20;   |
 
-Google Gemini API
+Groq API
 
 
 
@@ -74,7 +74,7 @@ Google Gemini API
 
 | Validation | Pydantic v2 |
 
-| LLM | Google Gemini (google-genai) |
+| LLM | Groq (SDK `groq`) |
 
 | Tests | pytest + pytest-asyncio |
 
@@ -92,7 +92,7 @@ Google Gemini API
 
 \- pip et venv
 
-\- Une clé API Google Gemini (gratuite sur https://aistudio.google.com/app/apikey)
+\- Une clé API Groq (gratuite sur https://console.groq.com/keys)
 
 
 
@@ -158,7 +158,7 @@ Puis éditer .env et renseigner :
 
 \- INTERNAL\_API\_KEY : clé partagée avec le backend principal
 
-\- GEMINI\_API\_KEY : votre clé API Google Gemini
+\- GROQ\_API\_KEY : votre clé API Groq
 
 
 
@@ -266,7 +266,7 @@ Réponse :
 
 &#x20; },
 
-&#x20; "model": "gemini-3.8-flash",
+&#x20; "model": "llama-3.3-70b-versatile",
 
 &#x20; "created\_at": "2026-10-09T11:31:24"
 

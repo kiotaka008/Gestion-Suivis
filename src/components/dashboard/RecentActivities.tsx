@@ -2,8 +2,6 @@ import { CheckCircle2, Clock, AlertCircle, Circle } from 'lucide-react';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '../ui/Card';
 import { Badge } from '../ui/Badge';
 import type { Activity, ActivityStatus } from '../../types/models';
-import { mockActivities } from '../../mocks/activities';
-import { mockProjects } from '../../mocks/projects';
 
 function getStatusIcon(status: ActivityStatus) {
   switch (status) {
@@ -44,11 +42,9 @@ function getStatusLabel(status: ActivityStatus) {
   }
 }
 
-export function RecentActivities() {
-  const activities = mockActivities.slice(0, 5);
-
+export function RecentActivities({ activities }: { activities: Activity[] }) {
   const findProjectName = (projectId: string) =>
-    mockProjects.find((p) => p.id === projectId)?.name ?? 'Projet inconnu';
+    activities.find((a) => a.projectId === projectId)?.projectName ?? 'Projet inconnu';
 
   return (
     <Card>

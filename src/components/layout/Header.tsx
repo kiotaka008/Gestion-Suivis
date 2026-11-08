@@ -1,9 +1,12 @@
 import { Menu, Search, Bell, LogOut, User as UserIcon, Settings as SettingsIcon } from 'lucide-react';
-import { useNavigate } from 'react-router-dom';
+import { useEffect, useState } from 'react';
+import { useLocation, useNavigate } from 'react-router-dom';
 import { ThemeToggle } from '../ui/ThemeToggle';
 import { Avatar } from '../ui/Avatar';
 import { Dropdown } from '../ui/Dropdown';
 import { ROUTES } from '../../constants/routes';
+import { useAuth } from '../../hooks/useAuth';
+import { notificationService } from '../../services/notificationService';
 
 interface HeaderProps {
   onMenuClick: () => void;
@@ -11,9 +14,25 @@ interface HeaderProps {
 
 export function Header({ onMenuClick }: HeaderProps) {
   const navigate = useNavigate();
+  const location = useLocation();
+  const { user, logout } = useAuth();
 
-  // Nombre de notifications non lues (mock — sera branché au backend plus tard)
-  const unreadCount = 3;
+  // Nombre de notifications non lues, rafraîchi à chaque changement de page.
+  const [unreadCount, setUnreadCount] = useState(0);
+  useEffect(() => {
+    let annule = false;
+    notificationService
+      .unreadCount()
+      .then((n) => {
+        if (!annule) setUnreadCount(n);
+      })
+      .catch(() => {
+        if (!annule) setUnreadCount(0);
+      });
+    return () => {
+      annule = true;
+    };
+  }, [location.pathname]);
 
   return (
     <header className="sticky top-0 z-30 flex h-16 items-center gap-4 border-b border-border bg-surface/95 px-4 backdrop-blur lg:px-6">
@@ -54,7 +73,7 @@ export function Header({ onMenuClick }: HeaderProps) {
         <Dropdown
           trigger={
             <button className="flex items-center gap-3 rounded-md p-1 hover:bg-muted">
-              <Avatar name="Marie Dupont" size="sm" />
+              <Avatar name={user?.name ?? 'Utilisateur'} size="sm" />
             </button>
           }
           items={[
@@ -73,8 +92,8 @@ export function Header({ onMenuClick }: HeaderProps) {
               icon: <LogOut className="h-4 w-4" />,
               variant: 'danger',
               onClick: () => {
-                // TODO: brancher sur authService.logout() quand le backend sera prêt
-                navigate(ROUTES.LOGIN);
+                // Efface le cookie de session côté backend, puis retour à la connexion.
+                void logout().finally(() => navigate(ROUTES.LOGIN, { replace: true }));
               },
             },
           ]}

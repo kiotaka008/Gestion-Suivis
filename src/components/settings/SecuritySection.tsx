@@ -5,6 +5,8 @@ import { Input } from '../ui/Input';
 import { Button } from '../ui/Button';
 import { Alert } from '../ui/Alert';
 import { Badge } from '../ui/Badge';
+import { authService } from '../../services/authService';
+import { ApiError } from '../../services/ApiError';
 
 export function SecuritySection() {
   const [currentPassword, setCurrentPassword] = useState('');
@@ -29,13 +31,18 @@ export function SecuritySection() {
     }
 
     setIsSaving(true);
-    await new Promise((r) => setTimeout(r, 600));
-    setIsSaving(false);
-    setSuccess(true);
-    setCurrentPassword('');
-    setNewPassword('');
-    setConfirmPassword('');
-    setTimeout(() => setSuccess(false), 3000);
+    try {
+      await authService.changePassword(currentPassword, newPassword);
+      setSuccess(true);
+      setCurrentPassword('');
+      setNewPassword('');
+      setConfirmPassword('');
+      setTimeout(() => setSuccess(false), 3000);
+    } catch (err) {
+      setError(err instanceof ApiError ? err.message : 'Une erreur est survenue.');
+    } finally {
+      setIsSaving(false);
+    }
   };
 
   return (

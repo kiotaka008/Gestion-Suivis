@@ -19,9 +19,11 @@ import {
 import { ActivitiesFilters, type ViewMode } from '../components/activities/ActivitiesFilters';
 import { ActivityCard } from '../components/activities/ActivityCard';
 import { CreateActivityModal } from '../components/activities/CreateActivityModal';
-import type { Activity, ActivityStatus, Priority } from '../types/models';
-import { mockActivities } from '../mocks/activities';
-import { mockProjects } from '../mocks/projects';
+import type { Activity, ActivityStatus, Priority, Project } from '../types/models';
+import { Alert } from '../components/ui/Alert';
+import { activityService } from '../services/activityService';
+import { projectService } from '../services/projectService';
+import { ApiError } from '../services/ApiError';
 
 function getStatusVariant(status: ActivityStatus) {
   switch (status) {
@@ -64,13 +66,27 @@ export function ActivitiesPage() {
   const [isCreateOpen, setIsCreateOpen] = useState(false);
   const [deleteTarget, setDeleteTarget] = useState<Activity | null>(null);
   const [isDeleting, setIsDeleting] = useState(false);
+  const [projects, setProjects] = useState<Project[]>([]);
+  const [error, setError] = useState<string | null>(null);
 
+  // Chargement des activités et des projets visibles (filtres, création, noms de projet).
   useEffect(() => {
-    const timer = setTimeout(() => {
-      setActivities(mockActivities);
-      setIsLoading(false);
-    }, 800);
-    return () => clearTimeout(timer);
+    let annule = false;
+    Promise.all([activityService.listAll(), projectService.listAll()])
+      .then(([listeActivites, listeProjets]) => {
+        if (annule) return;
+        setActivities(listeActivites);
+        setProjects(listeProjets);
+      })
+      .catch((err) => {
+        if (!annule) setError(err instanceof ApiError ? err.message : 'Chargement des activités impossible.');
+      })
+      .finally(() => {
+        if (!annule) setIsLoading(false);
+      });
+    return () => {
+      annule = true;
+    };
   }, []);
 
   const filtered = useMemo(() => {
@@ -108,31 +124,27 @@ export function ActivitiesPage() {
     return result;
   }, [activities, search, status, priority, projectId, sort]);
 
-  const findProjectName = (id: string) => mockProjects.find((p) => p.id === id)?.name ?? 'Projet inconnu';
+  const findProjectName = (id: string) =>
+    activities.find((a) => a.projectId === id)?.projectName ?? projects.find((p) => p.id === id)?.name ?? 'Projet inconnu';
 
-  const handleCreate = (data: Partial<Activity>) => {
-    const newActivity: Activity = {
-      id: `a-${Date.now()}`,
-      title: data.title ?? 'Sans titre',
-      description: data.description,
-      projectId: data.projectId ?? mockProjects[0].id,
-      status: data.status ?? 'todo',
-      priority: data.priority ?? 'medium',
-      progress: 0,
-      dueDate: data.dueDate,
-      createdAt: new Date().toISOString(),
-      updatedAt: new Date().toISOString(),
-    };
-    setActivities((prev) => [newActivity, ...prev]);
+  // Les erreurs remontent jusqu'au formulaire, qui affiche le message du backend.
+  const handleCreate = async (data: Partial<Activity>) => {
+    const creee = await activityService.create(data);
+    setActivities((prev) => [creee, ...prev]);
   };
 
   const handleDeleteConfirm = async () => {
     if (!deleteTarget) return;
     setIsDeleting(true);
-    await new Promise((r) => setTimeout(r, 400));
-    setActivities((prev) => prev.filter((a) => a.id !== deleteTarget.id));
-    setIsDeleting(false);
-    setDeleteTarget(null);
+    try {
+      await activityService.remove(deleteTarget.id);
+      setActivities((prev) => prev.filter((a) => a.id !== deleteTarget.id));
+    } catch (err) {
+      setError(err instanceof ApiError ? err.message : 'Suppression impossible.');
+    } finally {
+      setIsDeleting(false);
+      setDeleteTarget(null);
+    }
   };
 
   return (
@@ -147,6 +159,12 @@ export function ActivitiesPage() {
         }
       />
 
+      {error && (
+        <Alert variant="danger" className="mt-6">
+          {error}
+        </Alert>
+      )}
+
       <div className="mt-6">
         <ActivitiesFilters
           search={search} onSearchChange={setSearch}
@@ -155,7 +173,7 @@ export function ActivitiesPage() {
           projectId={projectId} onProjectChange={setProjectId}
           sort={sort} onSortChange={setSort}
           view={view} onViewChange={setView}
-          projects={mockProjects}
+          projects={projects}
         />
       </div>
 
@@ -212,7 +230,7 @@ export function ActivitiesPage() {
         )}
       </div>
 
-      <CreateActivityModal isOpen={isCreateOpen} onClose={() => setIsCreateOpen(false)} onCreate={handleCreate} projects={mockProjects} />
+      <CreateActivityModal isOpen={isCreateOpen} onClose={() => setIsCreateOpen(false)} onCreate={handleCreate} projects={projects} />
       <ConfirmDialog isOpen={!!deleteTarget} onClose={() => setDeleteTarget(null)} onConfirm={handleDeleteConfirm} title="Supprimer l'activité ?" description={`L'activité "${deleteTarget?.title}" sera définitivement supprimée.`} confirmLabel="Supprimer" isLoading={isDeleting} />
     </Container>
   );

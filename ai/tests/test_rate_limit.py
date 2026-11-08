@@ -1,4 +1,10 @@
 ﻿from fastapi.testclient import TestClient
+from starlette.requests import Request
+
+
+def FakeRequest() -> Request:
+    """Requête HTTP minimale venant de 127.0.0.1 (sans clé interne)."""
+    return Request({"type": "http", "method": "GET", "path": "/test", "headers": [], "client": ("127.0.0.1", 50000)})
 
 
 def test_rate_limit_allows_normal_requests(client: TestClient) -> None:
@@ -18,11 +24,6 @@ def test_rate_limiter_directly() -> None:
     """Test direct du RateLimiter (sans passer par le middleware)."""
     from app.core.rate_limit import RateLimiter
 
-    class FakeRequest:
-        class client:
-            host = "127.0.0.1"
-        headers = {}
-        url = type("URL", (), {"path": "/test"})()
 
     limiter = RateLimiter(max_requests_per_minute=3)
 
@@ -44,11 +45,6 @@ def test_rate_limiter_reset() -> None:
     """Le reset vide les compteurs."""
     from app.core.rate_limit import RateLimiter
 
-    class FakeRequest:
-        class client:
-            host = "127.0.0.1"
-        headers = {}
-        url = type("URL", (), {"path": "/test"})()
 
     limiter = RateLimiter(max_requests_per_minute=2)
     limiter.is_allowed(FakeRequest())

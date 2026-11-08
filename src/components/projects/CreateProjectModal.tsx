@@ -1,4 +1,5 @@
 import { useState, type FormEvent } from 'react';
+import { ApiError } from '../../services/ApiError';
 import { Modal } from '../ui/Modal';
 import { Input } from '../ui/Input';
 import { Textarea } from '../ui/Textarea';
@@ -60,8 +61,8 @@ export function CreateProjectModal({ isOpen, onClose, onCreate }: CreateProjectM
       });
       setForm(initialState);
       onClose();
-    } catch {
-      setError('Impossible de créer le projet. Veuillez réessayer.');
+    } catch (err) {
+      setError(err instanceof ApiError ? err.message : 'Impossible de créer le projet. Veuillez réessayer.');
     } finally {
       setIsSubmitting(false);
     }

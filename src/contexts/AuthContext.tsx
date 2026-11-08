@@ -1,17 +1,7 @@
-import { createContext, useCallback, useEffect, useState, type ReactNode } from 'react';
+import { useCallback, useEffect, useState, type ReactNode } from 'react';
 import type { User } from '../types/models';
 import { authService, type LoginPayload } from '../services/authService';
-
-export interface AuthContextValue {
-  user: User | null;
-  isLoading: boolean;
-  isAuthenticated: boolean;
-  login: (payload: LoginPayload) => Promise<void>;
-  logout: () => Promise<void>;
-  refresh: () => Promise<void>;
-}
-
-export const AuthContext = createContext<AuthContextValue | null>(null);
+import { AuthContext } from './authContextValue';
 
 export function AuthProvider({ children }: { children: ReactNode }) {
   const [user, setUser] = useState<User | null>(null);
@@ -45,6 +35,11 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     setUser(res.user);
   }, []);
 
+  const loginWithGoogle = useCallback(async (credential: string, organization?: string) => {
+    const res = await authService.loginWithGoogle(credential, organization);
+    setUser(res.user);
+  }, []);
+
   const logout = useCallback(async () => {
     try {
       await authService.logout();
@@ -60,6 +55,8 @@ export function AuthProvider({ children }: { children: ReactNode }) {
         isLoading,
         isAuthenticated: !!user,
         login,
+        loginWithGoogle,
+        setUser,
         logout,
         refresh,
       }}

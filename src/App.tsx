@@ -3,8 +3,7 @@ import { BrowserRouter, Routes, Route, Navigate } from 'react-router-dom';
 import { ErrorBoundary } from './components/ui/ErrorBoundary';
 import { AuthProvider } from './contexts/AuthContext';
 import { DashboardLayout } from './layouts/DashboardLayout';
-import { Container } from './components/ui/Container';
-import { PageHeader } from './components/ui/PageHeader';
+import { ProtectedRoute } from './routes/ProtectedRoute';
 import { ROUTES } from './constants/routes';
 import { Spinner } from './components/ui/Spinner';
 
@@ -20,12 +19,6 @@ const ReportsPage = lazy(() => import('./pages/ReportsPage').then(m => ({ defaul
 const NotificationsPage = lazy(() => import('./pages/NotificationsPage').then(m => ({ default: m.NotificationsPage })));
 const SettingsPage = lazy(() => import('./pages/SettingsPage').then(m => ({ default: m.SettingsPage })));
 const AIAssistantPage = lazy(() => import('./pages/AIAssistantPage').then(m => ({ default: m.AIAssistantPage })));
-
-const Placeholder = ({ title }: { title: string }) => (
-  <Container>
-    <PageHeader title={title} description="Page en construction." />
-  </Container>
-);
 
 // Composant de chargement pour Suspense
 const PageLoader = () => (
@@ -44,7 +37,8 @@ function App() {
               <Route path={ROUTES.LOGIN} element={<LoginPage />} />
               <Route path={ROUTES.REGISTER} element={<RegisterPage />} />
 
-              <Route>
+              {/* Pages réservées aux utilisateurs connectés (sinon redirection vers /login). */}
+              <Route element={<ProtectedRoute />}>
                 <Route element={<DashboardLayout />}>
                   <Route path={ROUTES.DASHBOARD} element={<DashboardPage />} />
                   <Route path={ROUTES.PROJECTS} element={<ProjectsPage />} />

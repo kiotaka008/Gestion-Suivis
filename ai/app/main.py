@@ -1,4 +1,4 @@
-﻿from contextlib import asynccontextmanager
+from contextlib import asynccontextmanager
 from typing import AsyncIterator
 
 from fastapi import FastAPI
@@ -27,7 +27,7 @@ logger = setup_logger("main")
 async def lifespan(app: FastAPI) -> AsyncIterator[None]:
     settings = get_settings()
     logger.info(f"Démarrage du service IA en mode {settings.environment}")
-    logger.info(f"Modèle LLM par défaut : {settings.gemini_model}")
+    logger.info(f"Modèle LLM (Groq) : {settings.groq_model}")
     yield
     logger.info("Arrêt du service IA")
 

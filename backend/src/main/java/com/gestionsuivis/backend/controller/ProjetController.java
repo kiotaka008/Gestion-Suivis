@@ -41,8 +41,8 @@ import java.util.UUID;
 public class ProjetController {
 
     static final Map<String, String> TRIS = Map.of("name", "nom", "status", "statut", "priority", "priorite",
-            "startDate", "dateDebut", "dueDate", "dateEcheance", "createdAt", "dateCreation",
-            "updatedAt", "dateModification");
+            "progress", "avancement", "startDate", "dateDebut", "dueDate", "dateEcheance",
+            "createdAt", "dateCreation", "updatedAt", "dateModification");
 
     private final ProjetService service;
     private final ActiviteService activiteService;

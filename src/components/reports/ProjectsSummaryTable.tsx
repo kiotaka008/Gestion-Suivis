@@ -9,8 +9,7 @@ import {
   TableHeader,
   TableRow,
 } from '../ui/Table';
-import type { ProjectStatus } from '../../types/models';
-import { reportsProjectsSummary } from '../../mocks/reports';
+import type { Report } from '../../types/models';
 
 function getStatusVariant(status: string) {
   switch (status) {
@@ -38,7 +37,7 @@ function getStatusLabel(status: string) {
   }
 }
 
-export function ProjectsSummaryTable() {
+export function ProjectsSummaryTable({ projects: reportsProjectsSummary }: { projects: Report['projectsSummary'] }) {
   return (
     <Card>
       <CardHeader>

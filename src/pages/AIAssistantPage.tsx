@@ -1,5 +1,6 @@
 import { useState } from 'react';
-import axios from 'axios';
+import { aiService } from '../services/aiService';
+import { ApiError } from '../services/ApiError';
 import { Container } from '../components/ui/Container';
 import { PageHeader } from '../components/ui/PageHeader';
 import { AIChat } from '../components/ai/AIChat';
@@ -19,6 +20,8 @@ const initialMessages: AIMessageType[] = [
 export function AIAssistantPage() {
   const [messages, setMessages] = useState<AIMessageType[]>(initialMessages);
   const [isLoading, setIsLoading] = useState(false);
+  // Identifiant de la conversation côté backend : l'IA garde ainsi le fil de l'échange.
+  const [conversationId, setConversationId] = useState<string | null>(null);
 
   const handleSend = async (content: string) => {
     // Message utilisateur
@@ -33,26 +36,26 @@ export function AIAssistantPage() {
     setIsLoading(true);
 
     try {
-      // Appel au backend Spring Boot
-      const response = await axios.post('/api/ai/chat', {
-        content,
-      });
+      // Appel au backend Spring Boot (qui interroge le service IA)
+      const response = await aiService.chat(content, conversationId);
+      setConversationId(response.conversationId);
 
-      // Récupérer la réponse de l'IA
       const aiMessage: AIMessageType = {
-        id: `m-${Date.now()}-a`,
+        id: response.message.id,
         role: 'assistant',
-        content: response.data.message.content,
-        createdAt: new Date().toISOString(),
+        content: response.message.content,
+        createdAt: response.message.createdAt ?? new Date().toISOString(),
       };
 
       setMessages((prev) => [...prev, aiMessage]);
     } catch (error) {
-      console.error('Erreur IA:', error);
       const errorMessage: AIMessageType = {
         id: `m-${Date.now()}-e`,
         role: 'assistant',
-        content: "Désolé, une erreur est survenue lors de l'appel à l'IA. Veuillez réessayer.",
+        content:
+          error instanceof ApiError
+            ? `Désolé, l'assistant n'a pas pu répondre : ${error.message}`
+            : "Désolé, une erreur est survenue lors de l'appel à l'IA. Veuillez réessayer.",
         createdAt: new Date().toISOString(),
       };
       setMessages((prev) => [...prev, errorMessage]);

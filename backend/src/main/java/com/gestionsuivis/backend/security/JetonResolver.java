@@ -19,7 +19,7 @@ import java.util.Set;
 public final class JetonResolver {
 
     static final Set<String> ROUTES_SANS_JETON = Set.of(
-            "/api/auth/login", "/api/auth/logout", "/api/auth/register", "/api/auth/csrf");
+            "/api/auth/login", "/api/auth/google", "/api/auth/logout", "/api/auth/register", "/api/auth/csrf");
 
     private JetonResolver() {
     }

@@ -3,9 +3,9 @@ import { useMemo } from 'react';
 import { useTheme } from '../../hooks/useTheme';
 import { getChartColors } from '../../utils/chartSetup';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '../ui/Card';
-import { reportsPriorityDistribution } from '../../mocks/reports';
+import type { Distribution } from '../../types/models';
 
-export function PriorityReportBar() {
+export function PriorityReportBar({ data: reportsPriorityDistribution }: { data: Distribution }) {
   const { theme } = useTheme();
   const isDark =
     theme === 'dark' ||

@@ -21,6 +21,6 @@ public record ModifierUtilisateurRequest(
 
         Role role,
 
-        @Size(max = 2000, message = "L'adresse de l'avatar ne doit pas dépasser 2000 caractères.")
+        @Size(max = 200000, message = "La photo de profil est trop volumineuse (200 000 caractères maximum).")
         String avatarUrl) {
 }

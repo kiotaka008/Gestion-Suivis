@@ -56,11 +56,12 @@ export function Modal({ isOpen, onClose, title, description, children, footer, s
         }
       };
 
-      modalRef.current?.addEventListener('keydown', handleTab);
+      const modal = modalRef.current;
+      modal?.addEventListener('keydown', handleTab);
       return () => {
         document.removeEventListener('keydown', onKey);
         document.body.style.overflow = '';
-        modalRef.current?.removeEventListener('keydown', handleTab);
+        modal?.removeEventListener('keydown', handleTab);
       };
     }
 

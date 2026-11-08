@@ -3,9 +3,9 @@ import { useMemo } from 'react';
 import { useTheme } from '../../hooks/useTheme';
 import { getChartColors } from '../../utils/chartSetup';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '../ui/Card';
-import { reportsMonthlyEvolution } from '../../mocks/reports';
+import type { ChartSeries } from '../../types/models';
 
-export function MonthlyEvolutionChart() {
+export function MonthlyEvolutionChart({ data: reportsMonthlyEvolution }: { data: ChartSeries }) {
   const { theme } = useTheme();
   const isDark =
     theme === 'dark' ||

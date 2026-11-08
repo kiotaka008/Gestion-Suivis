@@ -1,7 +1,9 @@
-﻿from typing import Any, AsyncIterator
+from typing import Any, AsyncIterator, cast
 
-from groq import AsyncGroq
+from groq import AsyncGroq, omit
 from groq import APIError as GroqAPIError
+from groq.types.chat import ChatCompletionMessageParam
+from groq.types.chat.completion_create_params import ResponseFormat
 
 from app.config import get_settings
 from app.core.exceptions import (
@@ -38,10 +40,7 @@ class LLMService:
     ) -> dict[str, Any]:
         settings = self._settings
 
-        groq_messages = [
-            {"role": "system", "content": system_prompt},
-            *messages,
-        ]
+        groq_messages = self._messages_groq(system_prompt, messages)
 
         try:
             logger.info(f"Appel Groq : modèle={settings.groq_model}, messages={len(messages)}")
@@ -50,7 +49,8 @@ class LLMService:
                 messages=groq_messages,
                 temperature=temperature if temperature is not None else 0.7,
                 max_tokens=max_tokens or 2048,
-                response_format=response_format,
+                # Sans format demandé, le paramètre n'est pas envoyé (et non « null »).
+                response_format=cast(ResponseFormat, response_format) if response_format is not None else omit,
             )
 
             content = response.choices[0].message.content or ""
@@ -85,10 +85,7 @@ class LLMService:
     ) -> AsyncIterator[str]:
         settings = self._settings
 
-        groq_messages = [
-            {"role": "system", "content": system_prompt},
-            *messages,
-        ]
+        groq_messages = self._messages_groq(system_prompt, messages)
 
         try:
             logger.info(f"Appel Groq STREAM : modèle={settings.groq_model}")
@@ -109,8 +106,14 @@ class LLMService:
             raise LLMError("Erreur lors du streaming LLM.")
 
     @staticmethod
-    def _convert_messages(messages: list[dict[str, str]]) -> list[dict[str, Any]]:
-        return messages
+    def _messages_groq(
+        system_prompt: str, messages: list[dict[str, str]]
+    ) -> list[ChatCompletionMessageParam]:
+        """Prompt système en tête, puis l'historique (rôles user/assistant) dans l'ordre."""
+        return cast(
+            list[ChatCompletionMessageParam],
+            [{"role": "system", "content": system_prompt}, *messages],
+        )
 
 
 _llm_service: LLMService | None = None

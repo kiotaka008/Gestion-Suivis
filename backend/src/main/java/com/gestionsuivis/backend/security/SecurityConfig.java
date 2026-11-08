@@ -120,7 +120,7 @@ public class SecurityConfig {
                 // nouvelle connexion et renouvellerait le jeton CSRF : des requêtes parallèles du
                 // frontend seraient alors refusées. Le jeton reste donc stable pendant la session.
                 .csrf(csrf -> csrf.spa()
-                        .ignoringRequestMatchers("/api/auth/login", "/api/auth/logout", "/api/auth/register")
+                        .ignoringRequestMatchers("/api/auth/login", "/api/auth/google", "/api/auth/logout", "/api/auth/register")
                         .sessionAuthenticationStrategy(new NullAuthenticatedSessionStrategy()))
                 .addFilterAfter(new CsrfCookieFilter(), CsrfFilter.class)
                 .addFilterBefore(new CookieJwtFilter(jwtDecoder, convertisseur), BearerTokenAuthenticationFilter.class)
@@ -131,9 +131,9 @@ public class SecurityConfig {
                 .requestCache(AbstractHttpConfigurer::disable)
                 .authorizeHttpRequests(autorisations -> autorisations
                         .requestMatchers(HttpMethod.OPTIONS, "/**").permitAll()
-                        .requestMatchers(HttpMethod.POST, "/api/auth/login", "/api/auth/logout",
+                        .requestMatchers(HttpMethod.POST, "/api/auth/login", "/api/auth/google", "/api/auth/logout",
                                 "/api/auth/register").permitAll()
-                        .requestMatchers(HttpMethod.GET, "/api/auth/csrf").permitAll()
+                        .requestMatchers(HttpMethod.GET, "/api/auth/csrf", "/api/auth/google/config").permitAll()
                         .requestMatchers("/error").permitAll()
                         .anyRequest().authenticated())
                 .oauth2ResourceServer(serveur -> serveur

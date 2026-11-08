@@ -22,7 +22,9 @@ import { ProjectCard } from '../components/projects/ProjectCard';
 import { CreateProjectModal } from '../components/projects/CreateProjectModal';
 import { SkeletonTable } from '../components/ui/SkeletonTable';
 import type { Project, ProjectStatus, Priority } from '../types/models';
-import { mockProjects } from '../mocks/projects';
+import { Alert } from '../components/ui/Alert';
+import { projectService } from '../services/projectService';
+import { ApiError } from '../services/ApiError';
 
 function getStatusVariant(status: ProjectStatus) {
   switch (status) {
@@ -77,15 +79,25 @@ export function ProjectsPage() {
   const [isCreateOpen, setIsCreateOpen] = useState(false);
   const [deleteTarget, setDeleteTarget] = useState<Project | null>(null);
   const [isDeleting, setIsDeleting] = useState(false);
+  const [error, setError] = useState<string | null>(null);
 
-  // Simulation du chargement initial (à remplacer par l'appel API)
+  // Chargement des projets visibles par l'utilisateur connecté.
   useEffect(() => {
-    const timer = setTimeout(() => {
-      setProjects(mockProjects);
-      setIsLoading(false);
-    }, 800); // Simule un délai de 800ms
-
-    return () => clearTimeout(timer);
+    let annule = false;
+    projectService
+      .listAll()
+      .then((liste) => {
+        if (!annule) setProjects(liste);
+      })
+      .catch((err) => {
+        if (!annule) setError(err instanceof ApiError ? err.message : 'Chargement des projets impossible.');
+      })
+      .finally(() => {
+        if (!annule) setIsLoading(false);
+      });
+    return () => {
+      annule = true;
+    };
   }, []);
 
   const filtered = useMemo(() => {
@@ -136,30 +148,24 @@ export function ProjectsPage() {
     return result;
   }, [projects, search, status, priority, sort]);
 
-  const handleCreate = (data: Partial<Project>) => {
-    const newProject: Project = {
-      id: `p-${Date.now()}`,
-      name: data.name ?? 'Sans titre',
-      description: data.description,
-      status: data.status ?? 'active',
-      priority: data.priority ?? 'medium',
-      progress: 0,
-      ownerId: 'u-001',
-      memberIds: ['u-001'],
-      dueDate: data.dueDate,
-      createdAt: new Date().toISOString(),
-      updatedAt: new Date().toISOString(),
-    };
-    setProjects((prev) => [newProject, ...prev]);
+  // Les erreurs remontent jusqu'au formulaire, qui affiche le message du backend.
+  const handleCreate = async (data: Partial<Project>) => {
+    const cree = await projectService.create(data);
+    setProjects((prev) => [cree, ...prev]);
   };
 
   const handleDeleteConfirm = async () => {
     if (!deleteTarget) return;
     setIsDeleting(true);
-    await new Promise((r) => setTimeout(r, 400));
-    setProjects((prev) => prev.filter((p) => p.id !== deleteTarget.id));
-    setIsDeleting(false);
-    setDeleteTarget(null);
+    try {
+      await projectService.remove(deleteTarget.id);
+      setProjects((prev) => prev.filter((p) => p.id !== deleteTarget.id));
+    } catch (err) {
+      setError(err instanceof ApiError ? err.message : 'Suppression impossible.');
+    } finally {
+      setIsDeleting(false);
+      setDeleteTarget(null);
+    }
   };
 
   return (
@@ -176,6 +182,12 @@ export function ProjectsPage() {
           </Button>
         }
       />
+
+      {error && (
+        <Alert variant="danger" className="mt-6">
+          {error}
+        </Alert>
+      )}
 
       <div className="mt-6">
         <ProjectsFilters

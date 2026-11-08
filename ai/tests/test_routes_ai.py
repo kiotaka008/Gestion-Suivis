@@ -1,4 +1,4 @@
-﻿import json
+import json
 from unittest.mock import AsyncMock, patch
 
 from fastapi.testclient import TestClient
@@ -10,7 +10,7 @@ def make_mock_response(content: dict) -> dict:
     return {
         "content": json.dumps(content),
         "usage": TokenUsage(prompt_tokens=10, completion_tokens=20, total_tokens=30),
-        "model": "gemini-3.8-flash",
+        "model": "llama-3.3-70b-versatile",
     }
 
 
@@ -21,7 +21,7 @@ def test_chat_endpoint(
     mock_resp = {
         "content": "Bonjour, je suis un assistant.",
         "usage": TokenUsage(prompt_tokens=10, completion_tokens=20, total_tokens=30),
-        "model": "gemini-3.8-flash",
+        "model": "llama-3.3-70b-versatile",
     }
     with patch(
         "app.services.llm_service.LLMService.complete",

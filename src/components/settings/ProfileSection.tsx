@@ -2,67 +2,118 @@ import { useState, useRef, type FormEvent } from 'react';
 import { Mail, User as UserIcon, Camera, Trash2 } from 'lucide-react';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '../ui/Card';
 import { Input } from '../ui/Input';
-import { Textarea } from '../ui/Textarea';
 import { Button } from '../ui/Button';
 import { Avatar } from '../ui/Avatar';
 import { Alert } from '../ui/Alert';
+import { useAuth } from '../../hooks/useAuth';
+import { userService } from '../../services/userService';
+import { ApiError } from '../../services/ApiError';
+
+/** Taille de la photo enregistrée (carré, en pixels) : assez petite pour tenir dans users.avatar_url. */
+const TAILLE_AVATAR = 128;
+
+/** Redimensionne l'image en carré JPEG et renvoie une data URL compacte. */
+function redimensionner(fichier: File): Promise<string> {
+  return new Promise((resolve, reject) => {
+    const lecteur = new FileReader();
+    lecteur.onerror = () => reject(new Error('Lecture du fichier impossible.'));
+    lecteur.onload = () => {
+      const image = new Image();
+      image.onerror = () => reject(new Error('Image illisible.'));
+      image.onload = () => {
+        const cote = Math.min(image.width, image.height);
+        const canvas = document.createElement('canvas');
+        canvas.width = TAILLE_AVATAR;
+        canvas.height = TAILLE_AVATAR;
+        const contexte = canvas.getContext('2d');
+        if (!contexte) {
+          reject(new Error('Traitement de l’image impossible.'));
+          return;
+        }
+        contexte.drawImage(image, (image.width - cote) / 2, (image.height - cote) / 2, cote, cote,
+          0, 0, TAILLE_AVATAR, TAILLE_AVATAR);
+        resolve(canvas.toDataURL('image/jpeg', 0.85));
+      };
+      image.src = lecteur.result as string;
+    };
+    lecteur.readAsDataURL(fichier);
+  });
+}
 
 export function ProfileSection() {
-  const [name, setName] = useState('Rickael Brayan');
-  const [email, setEmail] = useState('rickael@company.com');
-  const [bio, setBio] = useState('');
-  const [avatarPreview, setAvatarPreview] = useState<string | null>(null);
+  const { user, setUser } = useAuth();
+  const [name, setName] = useState(user?.name ?? '');
+  const [email, setEmail] = useState(user?.email ?? '');
+  const [avatar, setAvatar] = useState<string | null>(user?.avatarUrl ?? null);
   const [isSaving, setIsSaving] = useState(false);
-  const [success, setSuccess] = useState(false);
+  const [success, setSuccess] = useState<string | null>(null);
+  const [error, setError] = useState<string | null>(null);
 
   const fileInputRef = useRef<HTMLInputElement>(null);
 
-  // Ouvre l'explorateur de fichiers
+  // Le profil peut arriver après l'ouverture de la page : on resynchronise le formulaire.
+  const [utilisateurAffiche, setUtilisateurAffiche] = useState(user);
+  if (user !== utilisateurAffiche) {
+    setUtilisateurAffiche(user);
+    if (user) {
+      setName(user.name);
+      setEmail(user.email);
+      setAvatar(user.avatarUrl ?? null);
+    }
+  }
+
+  const enregistrer = async (payload: { name?: string; email?: string; avatarUrl?: string }, message: string) => {
+    setIsSaving(true);
+    setError(null);
+    setSuccess(null);
+    try {
+      const misAJour = await userService.updateMe(payload);
+      setUser(misAJour);
+      setSuccess(message);
+      setTimeout(() => setSuccess(null), 3000);
+    } catch (err) {
+      setError(err instanceof ApiError ? err.message : 'Une erreur est survenue.');
+    } finally {
+      setIsSaving(false);
+    }
+  };
+
   const handleChangePhoto = () => {
     fileInputRef.current?.click();
   };
 
-  // Gère la sélection du fichier
-  const handleFileChange = (e: React.ChangeEvent<HTMLInputElement>) => {
+  const handleFileChange = async (e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0];
     if (!file) return;
 
-    // Vérifie le type
     if (!file.type.startsWith('image/')) {
-      alert('Veuillez sélectionner une image.');
+      setError('Veuillez sélectionner une image.');
       return;
     }
-
-    // Vérifie la taille (max 2 Mo)
-    if (file.size > 2 * 1024 * 1024) {
-      alert('Image trop lourde (max 2 Mo).');
+    if (file.size > 5 * 1024 * 1024) {
+      setError('Image trop lourde (max 5 Mo).');
       return;
     }
-
-    // Aperçu local
-    const reader = new FileReader();
-    reader.onload = (event) => {
-      setAvatarPreview(event.target?.result as string);
-    };
-    reader.readAsDataURL(file);
-
-    // Plus tard : envoyer au backend
-    // await userService.uploadAvatar(file);
+    try {
+      const dataUrl = await redimensionner(file);
+      setAvatar(dataUrl);
+      await enregistrer({ avatarUrl: dataUrl }, 'Votre photo de profil a été mise à jour.');
+    } catch (err) {
+      setError(err instanceof Error ? err.message : 'Image invalide.');
+    } finally {
+      if (fileInputRef.current) fileInputRef.current.value = '';
+    }
   };
 
-  const handleRemovePhoto = () => {
-    setAvatarPreview(null);
-    if (fileInputRef.current) fileInputRef.current.value = '';
+  const handleRemovePhoto = async () => {
+    setAvatar(null);
+    // Une chaîne vide efface la photo côté backend.
+    await enregistrer({ avatarUrl: '' }, 'Votre photo de profil a été supprimée.');
   };
 
   const handleSubmit = async (e: FormEvent<HTMLFormElement>) => {
     e.preventDefault();
-    setIsSaving(true);
-    setSuccess(false);
-    await new Promise((r) => setTimeout(r, 600));
-    setIsSaving(false);
-    setSuccess(true);
-    setTimeout(() => setSuccess(false), 3000);
+    await enregistrer({ name: name.trim(), email: email.trim() }, 'Vos informations ont été mises à jour.');
   };
 
   return (
@@ -74,29 +125,26 @@ export function ProfileSection() {
         </p>
       </div>
 
-      {success && (
-        <Alert variant="success">
-          Vos informations ont été mises à jour.
-        </Alert>
-      )}
+      {success && <Alert variant="success">{success}</Alert>}
+      {error && <Alert variant="danger">{error}</Alert>}
 
       <Card>
         <CardHeader>
           <CardTitle>Photo de profil</CardTitle>
           <CardDescription>
-            Cette photo apparaîtra sur votre profil et vos commentaires.
+            Cette photo apparaîtra sur votre profil.
           </CardDescription>
         </CardHeader>
         <CardContent>
           <div className="flex items-center gap-4">
-            {avatarPreview ? (
+            {avatar ? (
               <img
-                src={avatarPreview}
-                alt="Aperçu"
+                src={avatar}
+                alt="Photo de profil"
                 className="h-12 w-12 rounded-full object-cover"
               />
             ) : (
-              <Avatar name={name} size="lg" />
+              <Avatar name={name || 'Utilisateur'} size="lg" />
             )}
 
             <div className="flex gap-2">
@@ -114,16 +162,18 @@ export function ProfileSection() {
                 size="sm"
                 leftIcon={<Camera className="h-4 w-4" />}
                 onClick={handleChangePhoto}
+                disabled={isSaving}
               >
                 Changer
               </Button>
 
-              {avatarPreview && (
+              {avatar && (
                 <Button
                   variant="ghost"
                   size="sm"
                   leftIcon={<Trash2 className="h-4 w-4" />}
                   onClick={handleRemovePhoto}
+                  disabled={isSaving}
                 >
                   Supprimer
                 </Button>
@@ -156,13 +206,6 @@ export function ProfileSection() {
               value={email}
               onChange={(e) => setEmail(e.target.value)}
               leftIcon={<Mail className="h-4 w-4" />}
-            />
-            <Textarea
-              label="Bio"
-              name="bio"
-              value={bio}
-              onChange={(e) => setBio(e.target.value)}
-              placeholder="Quelques mots sur vous..."
             />
             <div className="flex justify-end">
               <Button type="submit" isLoading={isSaving}>

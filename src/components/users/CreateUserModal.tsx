@@ -4,25 +4,29 @@ import { Input } from '../ui/Input';
 import { Select } from '../ui/Select';
 import { Button } from '../ui/Button';
 import { Alert } from '../ui/Alert';
-import { Mail, User as UserIcon } from 'lucide-react';
-import type { User, Role } from '../../types/models';
+import { Lock, Mail, User as UserIcon } from 'lucide-react';
+import type { Role } from '../../types/models';
+import type { CreateUserPayload } from '../../services/userService';
+import { ApiError } from '../../services/ApiError';
 
 export interface CreateUserModalProps {
   isOpen: boolean;
   onClose: () => void;
-  onCreate: (data: Partial<User>) => Promise<void> | void;
+  onCreate: (data: CreateUserPayload) => Promise<void> | void;
 }
 
 interface FormState {
   name: string;
   email: string;
   role: Role;
+  password: string;
 }
 
 const initialState: FormState = {
   name: '',
   email: '',
   role: 'member',
+  password: '',
 };
 
 export function CreateUserModal({ isOpen, onClose, onCreate }: CreateUserModalProps) {
@@ -49,6 +53,10 @@ export function CreateUserModal({ isOpen, onClose, onCreate }: CreateUserModalPr
       setError('Veuillez saisir un email valide.');
       return;
     }
+    if (form.password.length < 8) {
+      setError('Le mot de passe initial doit contenir au moins 8 caractères.');
+      return;
+    }
 
     setIsSubmitting(true);
     try {
@@ -56,12 +64,13 @@ export function CreateUserModal({ isOpen, onClose, onCreate }: CreateUserModalPr
         name: form.name.trim(),
         email: form.email.trim().toLowerCase(),
         role: form.role,
+        password: form.password,
         isActive: true,
       });
       setForm(initialState);
       onClose();
-    } catch {
-      setError("Impossible de créer l'utilisateur. Veuillez réessayer.");
+    } catch (err) {
+      setError(err instanceof ApiError ? err.message : "Impossible de créer l'utilisateur. Veuillez réessayer.");
     } finally {
       setIsSubmitting(false);
     }
@@ -109,6 +118,18 @@ export function CreateUserModal({ isOpen, onClose, onCreate }: CreateUserModalPr
           leftIcon={<Mail className="h-4 w-4" />}
           value={form.email}
           onChange={(e) => setForm({ ...form, email: e.target.value })}
+          required
+        />
+
+        <Input
+          label="Mot de passe initial"
+          name="password"
+          isPassword
+          autoComplete="new-password"
+          placeholder="8 caractères minimum"
+          leftIcon={<Lock className="h-4 w-4" />}
+          value={form.password}
+          onChange={(e) => setForm({ ...form, password: e.target.value })}
           required
         />
 

@@ -1,6 +1,14 @@
-import api from './api';
-import type { User } from '../types/models';
+import api, { lireTout } from './api';
+import type { Role, User } from '../types/models';
 import type { PaginatedResponse, PaginationParams } from '../types/api';
+
+export interface CreateUserPayload {
+  name: string;
+  email: string;
+  role: Role;
+  password: string;
+  isActive?: boolean;
+}
 
 export const userService = {
   async list(params?: PaginationParams): Promise<PaginatedResponse<User>> {
@@ -8,8 +16,18 @@ export const userService = {
     return data;
   },
 
+  /** Tous les utilisateurs visibles (ADMIN et MANAGER). */
+  listAll(): Promise<User[]> {
+    return lireTout<User>('/users');
+  },
+
   async getById(id: string): Promise<User> {
     const { data } = await api.get<User>(`/users/${id}`);
+    return data;
+  },
+
+  async create(payload: CreateUserPayload): Promise<User> {
+    const { data } = await api.post<User>('/users', payload);
     return data;
   },
 
@@ -18,7 +36,21 @@ export const userService = {
     return data;
   },
 
+  /** Modification de son propre profil. */
+  async updateMe(payload: { name?: string; email?: string; avatarUrl?: string }): Promise<User> {
+    const { data } = await api.patch<User>('/users/me', payload);
+    return data;
+  },
+
+  async activate(id: string): Promise<void> {
+    await api.post(`/users/${id}/activate`);
+  },
+
   async deactivate(id: string): Promise<void> {
     await api.post(`/users/${id}/deactivate`);
+  },
+
+  async remove(id: string): Promise<void> {
+    await api.delete(`/users/${id}`);
   },
 };

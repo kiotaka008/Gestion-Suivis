@@ -40,7 +40,7 @@ import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.
  * données (le dépôt des utilisateurs et le service d'authentification sont simulés).
  */
 @WebMvcTest(controllers = AuthController.class)
-@Import({SecurityConfig.class, JwtService.class, SecuriteHttpTest.Configuration.class})
+@Import({SecurityConfig.class, JwtService.class, VerificateurGoogle.class, SecuriteHttpTest.Configuration.class})
 class SecuriteHttpTest {
 
     /** Exécuteur d'organisation sans base : la transaction est simulée. */

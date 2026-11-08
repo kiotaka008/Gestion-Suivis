@@ -74,4 +74,5 @@ def get_settings() -> Settings:
     Retourne une instance unique (singleton) de Settings.
     Utilise lru_cache pour ne lire le .env qu'une seule fois.
     """
-    return Settings()
+    # Les champs obligatoires (INTERNAL_API_KEY) viennent de l'environnement ou du .env.
+    return Settings()  # pyright: ignore[reportCallIssue]
