@@ -182,11 +182,18 @@ public class AuthService {
         if (!securite.inscriptionOuverte()) {
             throw new AccesInterditException("L'inscription libre est désactivée. Contactez un administrateur.");
         }
+        boolean organisationIndiquee = requete.organization() != null && !requete.organization().isBlank();
         List<UUID> candidates = organisationsCandidates(requete.organization());
         if (candidates.size() != 1) {
-            throw new RequeteInvalideException("organization", candidates.isEmpty()
-                    ? "Aucune organisation n'est disponible."
-                    : "Précisez l'organisation à rejoindre.");
+            String message;
+            if (!candidates.isEmpty()) {
+                message = "Précisez l'organisation à rejoindre.";
+            } else if (organisationIndiquee) {
+                message = "Organisation introuvable : vérifiez son identifiant.";
+            } else {
+                message = "Aucune organisation n'est disponible.";
+            }
+            throw new RequeteInvalideException("organization", message);
         }
         String email = normaliser(requete.email());
         return executeur.ecrire(candidates.getFirst(), () -> {

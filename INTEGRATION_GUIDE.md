@@ -4,7 +4,7 @@ Ce document explique comment les 3 parties du projet (Frontend, Backend, Service
 
 ## Architecture
 
-Frontend (React) → Backend Principal → Service IA (FastAPI) → Google Gemini API
+Frontend (React) → Backend Principal → Service IA (FastAPI) → Groq API (modèle llama-3.3-70b-versatile)
 
 ## Règles d'or
 
@@ -49,7 +49,7 @@ Le Backend peut soit retransmettre le flux `text/event-stream` tel quel au Front
 
 ## 3. Pour le Service IA (FastAPI)
 
-Le Service IA reçoit des requêtes structurées et renvoie des réponses de Gemini.
+Le Service IA reçoit des requêtes structurées et renvoie des réponses du modèle Groq (ou des réponses simulées si `USE_MOCK=true`).
 
 ### Endpoints disponibles
 | Endpoint | Méthode | Description |

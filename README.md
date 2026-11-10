@@ -18,13 +18,13 @@
 
 # 2\. \*\*Backend (Java / Spring Boot)\*\* : API REST, authentification JWT, gestion des données et proxy vers le service IA.
 
-# 3\. \*\*Service IA (Python / FastAPI)\*\* : Micro-service dédié à l'intelligence artificielle (Google Gemini).
+# 3\. \*\*Service IA (Python / FastAPI)\*\* : Micro-service dédié à l'intelligence artificielle (Groq).
 
 # 
 
 # Flux de données :
 
-# Frontend (React) → Backend (Spring Boot) → Service IA (FastAPI) → Google Gemini API
+# Frontend (React) → Backend (Spring Boot) → Service IA (FastAPI) → Groq API
 
 # 
 

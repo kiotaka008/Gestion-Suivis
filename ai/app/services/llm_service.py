@@ -12,7 +12,8 @@ from app.core.exceptions import (
     LLMTimeoutError,
     UnauthorizedError,
 )
-from app.models.schemas import TokenUsage
+from app.models.schemas import AITaskType, TokenUsage
+from app.services.mock_llm import MODELE_SIMULE, USAGE_SIMULE, contenu_simule, tache_depuis_prompt
 from app.utils.logger import get_logger
 
 logger = get_logger("llm_service")
@@ -39,6 +40,12 @@ class LLMService:
         response_format: dict[str, str] | None = None,
     ) -> dict[str, Any]:
         settings = self._settings
+
+        # Mode démo : réponse simulée au format de la tâche, sans appel à Groq.
+        if settings.use_mock:
+            tache = tache_depuis_prompt(system_prompt)
+            logger.info(f"MODE MOCK — réponse simulée pour la tâche {tache.value}")
+            return {"content": contenu_simule(tache), "usage": USAGE_SIMULE, "model": MODELE_SIMULE}
 
         groq_messages = self._messages_groq(system_prompt, messages)
 
@@ -84,6 +91,14 @@ class LLMService:
         max_tokens: int | None = None,
     ) -> AsyncIterator[str]:
         settings = self._settings
+
+        # Mode démo : la réponse simulée du chat est envoyée mot par mot.
+        if settings.use_mock:
+            logger.info("MODE MOCK — flux simulé")
+            mots = contenu_simule(AITaskType.CHAT).split(" ")
+            for i, mot in enumerate(mots):
+                yield mot if i == 0 else " " + mot
+            return
 
         groq_messages = self._messages_groq(system_prompt, messages)
 

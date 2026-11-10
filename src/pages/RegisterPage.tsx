@@ -1,6 +1,6 @@
 import { useState, type FormEvent } from 'react';
 import { Navigate, useNavigate, Link } from 'react-router-dom';
-import { Mail, Lock, User as UserIcon, ArrowRight, Shield } from 'lucide-react';
+import { Mail, Lock, User as UserIcon, ArrowRight, Shield, Building2 } from 'lucide-react';
 import { Input } from '../components/ui/Input';
 import { Checkbox } from '../components/ui/Checkbox';
 import { Alert } from '../components/ui/Alert';
@@ -46,7 +46,7 @@ function FeatureChip({ icon, title, subtitle }: { icon: React.ReactNode; title: 
 }
 
 export function RegisterPage() {
-  const { isAuthenticated, isLoading, loginWithGoogle } = useAuth();
+  const { isAuthenticated, isLoading, login, loginWithGoogle } = useAuth();
   const navigate = useNavigate();
 
   const [name, setName] = useState('');
@@ -55,15 +55,21 @@ export function RegisterPage() {
   const [acceptTerms, setAcceptTerms] = useState(false);
   const [isSubmitting, setIsSubmitting] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  // Identifiant (slug) de l'organisation à rejoindre, fourni par celle-ci (ex. demo-corp).
+  const [organization, setOrganization] = useState('');
+
+  const gererErreur = (err: unknown) => {
+    setError(err instanceof ApiError ? err.message : 'Une erreur est survenue.');
+  };
 
   // Inscription avec Google : le backend crée le compte si l'inscription libre est ouverte.
   const onGoogleCredential = async (credential: string) => {
     setError(null);
     try {
-      await loginWithGoogle(credential);
+      await loginWithGoogle(credential, organization.trim() || undefined);
       navigate(ROUTES.DASHBOARD, { replace: true });
     } catch (err) {
-      setError(err instanceof ApiError ? err.message : 'Une erreur est survenue.');
+      gererErreur(err);
     }
   };
 
@@ -90,12 +96,29 @@ export function RegisterPage() {
       setError('Le mot de passe doit contenir au moins 8 caractères.');
       return;
     }
+    if (!organization.trim()) {
+      setError("Indiquez l'organisation à rejoindre.");
+      return;
+    }
     setIsSubmitting(true);
+    const identifiants = {
+      email: email.trim(),
+      password,
+      organization: organization.trim() || undefined,
+    };
+    let inscrit = false;
     try {
-      await authService.register({ name: name.trim(), email: email.trim(), password });
-      navigate(ROUTES.LOGIN, { replace: true });
+      await authService.register({ name: name.trim(), ...identifiants });
+      inscrit = true;
+      // Compte créé : connexion directe avec les mêmes identifiants.
+      await login(identifiants);
+      navigate(ROUTES.DASHBOARD, { replace: true });
     } catch (err) {
-      setError(err instanceof ApiError ? err.message : 'Une erreur est survenue.');
+      if (inscrit) {
+        navigate(ROUTES.LOGIN, { replace: true });
+      } else {
+        gererErreur(err);
+      }
     } finally {
       setIsSubmitting(false);
       setPassword('');
@@ -232,6 +255,19 @@ export function RegisterPage() {
                 onChange={(e) => setPassword(e.target.value)}
                 required
               />
+
+              <Input
+                label="Organisation"
+                name="organization"
+                placeholder="ex. demo-corp"
+                leftIcon={<Building2 className="h-4 w-4" />}
+                value={organization}
+                onChange={(e) => setOrganization(e.target.value)}
+                required
+              />
+              <p className="-mt-3 text-xs text-slate-500 dark:text-slate-400">
+                Identifiant de l'organisation que vous rejoignez (communiqué par votre équipe).
+              </p>
 
               <Checkbox
                 label="J'accepte les conditions d'utilisation"

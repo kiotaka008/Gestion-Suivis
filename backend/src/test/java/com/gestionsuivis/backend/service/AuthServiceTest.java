@@ -168,7 +168,12 @@ class AuthServiceTest {
         AuthService service = service(true);
 
         assertThatThrownBy(() -> service.inscrire(new InscriptionRequest("Nouveau", "n@exemple.com", "12345678")))
-                .isInstanceOf(RequeteInvalideException.class);
+                .isInstanceOf(RequeteInvalideException.class)
+                .hasMessage("Précisez l'organisation à rejoindre.");
+        assertThatThrownBy(() -> service.inscrire(
+                new InscriptionRequest("Nouveau", "n@exemple.com", "12345678", "slug-inexistant")))
+                .isInstanceOf(RequeteInvalideException.class)
+                .hasMessage("Organisation introuvable : vérifiez son identifiant.");
 
         var cree = service.inscrire(new InscriptionRequest("Nouveau", "Nouveau@Exemple.com", "12345678", "autre"));
 
