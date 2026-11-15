@@ -100,6 +100,12 @@ class ServiceIaClientReseauTest {
 
     @Test
     void delaiDeLectureDuChatDepasse_donneIndisponibleRapidement() {
+        // Échauffement : le tout premier appel HTTP de la JVM charge les classes du client HTTP,
+        // de RestClient et de Jackson (mesuré : ~2,1 s à froid sur le poste de développement,
+        // davantage si la machine est chargée, contre 0,3 à 0,4 s ensuite). La mesure ci-dessous
+        // doit porter sur le délai de lecture seul, pas sur ce coût unique de démarrage.
+        ServiceIaClientConfig.creerClient(proprietes(url, Duration.ofSeconds(5)))
+                .envoyerChat(ChatIaRequete.de(List.of(MessageIa.utilisateur("Échauffement")), null, null));
         ServiceIaClient client = ServiceIaClientConfig.creerClient(proprietes(url + "/lent", DELAI_COURT));
 
         long debut = System.nanoTime();

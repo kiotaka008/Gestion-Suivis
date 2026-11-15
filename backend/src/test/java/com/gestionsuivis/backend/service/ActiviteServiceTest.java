@@ -68,7 +68,14 @@ class ActiviteServiceTest {
         activite = Donnees.activite("Saisie", projet, employe, StatutActivite.EN_COURS, LocalDate.of(2025, 10, 20));
         when(activites.findById(activite.getId())).thenReturn(Optional.of(activite));
         when(projets.findById(projet.getId())).thenReturn(Optional.of(projet));
-        when(activites.saveAndFlush(any())).thenAnswer(invocation -> invocation.getArgument(0));
+        // Comme la base : un identifiant est attribué à l'enregistrement.
+        when(activites.saveAndFlush(any())).thenAnswer(invocation -> {
+            Activite a = invocation.getArgument(0);
+            if (a.getId() == null) {
+                a.setId(java.util.UUID.randomUUID());
+            }
+            return a;
+        });
     }
 
     @Test
@@ -177,5 +184,45 @@ class ActiviteServiceTest {
         when(courant.obtenir()).thenReturn(Donnees.connecte(manager));
 
         assertThat(service.obtenir(activite.getId()).isOverdue()).isTrue();
+    }
+
+    // ---------------------------------------------------------------- historique (audit)
+
+    @Test
+    @SuppressWarnings("unchecked")
+    void modification_journaliseLesChampsReellementModifiesEtLeNouveauStatut() {
+        when(courant.obtenir()).thenReturn(Donnees.connecte(manager));
+
+        service.modifier(activite.getId(), new ModifierActiviteRequest(
+                "Saisie", null, StatutActivite.TERMINE, null, null, null, LocalDate.of(2025, 10, 25), null));
+
+        org.mockito.ArgumentCaptor<java.util.Map<String, ?>> details = org.mockito.ArgumentCaptor.forClass(java.util.Map.class);
+        verify(audit).journaliser(eq(manager.getId()), eq("updated"), eq(AuditService.ACTIVITE), eq(activite.getId()),
+                details.capture());
+        // Titre identique : non retenu ; seuls le statut et l'échéance ont changé.
+        assertThat(details.getValue().get(AuditService.CLE_CHAMPS)).isEqualTo(java.util.List.of("dueDate", "status"));
+        assertThat(details.getValue().get(AuditService.CLE_STATUT)).isEqualTo("done");
+    }
+
+    @Test
+    void modificationSansChangement_neJournaliseRien() {
+        when(courant.obtenir()).thenReturn(Donnees.connecte(manager));
+
+        service.modifier(activite.getId(), new ModifierActiviteRequest(
+                "Saisie", null, StatutActivite.EN_COURS, null, null, null, null, null));
+
+        verify(audit, org.mockito.Mockito.never()).journaliser(any(), eq("updated"), any(), any(), any());
+    }
+
+    @Test
+    void creation_estAussiVisibleDansLHistoriqueDuProjet() {
+        when(courant.obtenir()).thenReturn(Donnees.connecte(manager));
+
+        ActiviteResponse reponse = service.creer(new CreerActiviteRequest("Rapport", null, projet.getId(), null,
+                null, null, null, null, null));
+
+        verify(audit).journaliser(eq(manager.getId()), eq("activity_created"), eq(AuditService.PROJET),
+                eq(projet.getId()), eq(java.util.Map.of(AuditService.CLE_ACTIVITE, reponse.id(),
+                        AuditService.CLE_TITRE_ACTIVITE, "Rapport")));
     }
 }
