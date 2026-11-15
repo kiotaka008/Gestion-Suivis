@@ -175,6 +175,7 @@ public class AuthService {
                     "Le nouveau mot de passe doit être différent de l'actuel.");
         }
         utilisateur.setMotDePasseHash(encodeur.encode(requete.newPassword()));
+        audit.journaliser(utilisateur.getId(), "password_changed", AuditService.UTILISATEUR, utilisateur.getId());
         log.info("Mot de passe modifié pour l'utilisateur {}", utilisateur.getId());
     }
 

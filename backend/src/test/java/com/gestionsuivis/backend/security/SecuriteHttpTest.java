@@ -27,6 +27,8 @@ import java.util.Optional;
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.Mockito.when;
+import static org.mockito.Mockito.doReturn;
+import static org.mockito.Mockito.doThrow;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.get;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.options;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.post;
@@ -40,7 +42,8 @@ import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.
  * données (le dépôt des utilisateurs et le service d'authentification sont simulés).
  */
 @WebMvcTest(controllers = AuthController.class)
-@Import({SecurityConfig.class, JwtService.class, VerificateurGoogle.class, SecuriteHttpTest.Configuration.class})
+@Import({SecurityConfig.class, JwtService.class, VerificateurGoogle.class, LimiteurConnexion.class,
+        SecuriteHttpTest.Configuration.class})
 class SecuriteHttpTest {
 
     /** Exécuteur d'organisation sans base : la transaction est simulée. */
@@ -232,6 +235,76 @@ class SecuriteHttpTest {
                         .header(HttpHeaders.ORIGIN, "http://site-malveillant.example")
                         .header(HttpHeaders.ACCESS_CONTROL_REQUEST_METHOD, "POST"))
                 .andExpect(status().isForbidden());
+    }
+
+
+    // ---------------------------------------------------------------- limitation des tentatives
+
+    private org.springframework.test.web.servlet.ResultActions connexionDepuis(String ip, String email) throws Exception {
+        return mockMvc.perform(post("/api/auth/login")
+                .with(requete -> {
+                    requete.setRemoteAddr(ip);
+                    return requete;
+                })
+                .contentType(MediaType.APPLICATION_JSON)
+                .content("{\"email\":\"" + email + "\",\"password\":\"mauvais-mot-de-passe\"}"));
+    }
+
+    @Test
+    void cinqEchecs_laSixiemeTentativeRenvoie429AvecRetryAfter_sansVerifierLeMotDePasse() throws Exception {
+        doThrow(new IdentifiantsInvalidesException()).when(authService).connecter(any());
+        for (int i = 0; i < LimiteurConnexion.MAX_ECHECS_EMAIL; i++) {
+            connexionDepuis("192.0.2.50", "limite@exemple.com").andExpect(status().isUnauthorized());
+        }
+
+        connexionDepuis("192.0.2.50", "LIMITE@exemple.com ")
+                .andExpect(status().isTooManyRequests())
+                // Délai jusqu'à la sortie du premier échec de la fenêtre de 15 min (horloge réelle : 899 ou 900 s).
+                .andExpect(header().string(HttpHeaders.RETRY_AFTER, org.hamcrest.Matchers.matchesPattern("89[0-9]|900")))
+                .andExpect(jsonPath("$.status").value(429))
+                .andExpect(jsonPath("$.code").value("RATE_LIMITED"))
+                .andExpect(jsonPath("$.message").value(
+                        "Trop de tentatives de connexion échouées. Réessayez dans 15 minutes."));
+
+        // La 6e tentative est refusée avant l'appel au service (pas de calcul BCrypt).
+        org.mockito.Mockito.verify(authService, org.mockito.Mockito.times(LimiteurConnexion.MAX_ECHECS_EMAIL))
+                .connecter(any());
+    }
+
+    @Test
+    void connexionReussie_remetLeCompteurEmailAZero() throws Exception {
+        doThrow(new IdentifiantsInvalidesException()).when(authService).connecter(any());
+        for (int i = 0; i < LimiteurConnexion.MAX_ECHECS_EMAIL - 1; i++) {
+            connexionDepuis("192.0.2.60", "reprise@exemple.com").andExpect(status().isUnauthorized());
+        }
+        doReturn(new AuthService.ResultatConnexion(dto, jwtService.generer(utilisateur)))
+                .when(authService).connecter(any());
+        connexionDepuis("192.0.2.60", "reprise@exemple.com").andExpect(status().isOk());
+
+        doThrow(new IdentifiantsInvalidesException()).when(authService).connecter(any());
+        for (int i = 0; i < LimiteurConnexion.MAX_ECHECS_EMAIL; i++) {
+            connexionDepuis("192.0.2.61", "reprise@exemple.com").andExpect(status().isUnauthorized());
+        }
+        connexionDepuis("192.0.2.61", "reprise@exemple.com").andExpect(status().isTooManyRequests());
+    }
+
+    @Test
+    void enTeteXForwardedFor_ignore_parDefaut() throws Exception {
+        doThrow(new IdentifiantsInvalidesException()).when(authService).connecter(any());
+        // Un client qui change X-Forwarded-For à chaque essai reste compté sur son adresse réelle.
+        for (int i = 0; i < LimiteurConnexion.MAX_ECHECS_IP; i++) {
+            final int numero = i;
+            mockMvc.perform(post("/api/auth/login")
+                            .with(requete -> {
+                                requete.setRemoteAddr("192.0.2.70");
+                                return requete;
+                            })
+                            .header("X-Forwarded-For", "10.9.8." + numero)
+                            .contentType(MediaType.APPLICATION_JSON)
+                            .content("{\"email\":\"spray" + numero + "@exemple.com\",\"password\":\"x\"}"))
+                    .andExpect(status().isUnauthorized());
+        }
+        connexionDepuis("192.0.2.70", "autre@exemple.com").andExpect(status().isTooManyRequests());
     }
 
     private Cookie cookieJwt() {

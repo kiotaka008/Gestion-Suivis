@@ -1,5 +1,7 @@
 package com.gestionsuivis.backend.controller;
 
+import com.gestionsuivis.backend.service.HistoriqueService;
+import com.gestionsuivis.backend.dto.historique.EvenementHistoriqueResponse;
 import com.gestionsuivis.backend.config.PaginationConfig;
 import com.gestionsuivis.backend.dto.PageResponse;
 import com.gestionsuivis.backend.dto.activite.ActiviteResponse;
@@ -40,6 +42,7 @@ public class ActiviteController {
             "createdAt", "dateCreation", "updatedAt", "dateModification");
 
     private final ActiviteService service;
+    private final HistoriqueService historique;
 
     @GetMapping
     public PageResponse<ActiviteResponse> lister(
@@ -74,5 +77,13 @@ public class ActiviteController {
     public ResponseEntity<Void> supprimer(@PathVariable UUID id) {
         service.supprimer(id);
         return ResponseEntity.noContent().build();
+    }
+
+    /** Historique de l'activité : actions du plus récent au plus ancien, paginées (page, perPage). */
+    @GetMapping("/{id}/history")
+    public PageResponse<EvenementHistoriqueResponse> historique(
+            @PathVariable UUID id,
+            @RequestParam(required = false) Integer page, @RequestParam(required = false) Integer perPage) {
+        return historique.activite(id, PaginationConfig.creer(page, perPage, null, null, Map.of(), HistoriqueService.TRI));
     }
 }

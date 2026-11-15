@@ -1,5 +1,7 @@
 package com.gestionsuivis.backend.controller;
 
+import com.gestionsuivis.backend.service.HistoriqueService;
+import com.gestionsuivis.backend.dto.historique.EvenementHistoriqueResponse;
 import com.gestionsuivis.backend.config.PaginationConfig;
 import com.gestionsuivis.backend.dto.PageResponse;
 import com.gestionsuivis.backend.dto.utilisateur.CreerUtilisateurRequest;
@@ -42,6 +44,7 @@ public class UtilisateurController {
             "name", "nom", "email", "email", "role", "role", "isActive", "actif", "createdAt", "dateCreation");
 
     private final UtilisateurService service;
+    private final HistoriqueService historique;
     private final AuthService authService;
 
     @GetMapping
@@ -95,5 +98,13 @@ public class UtilisateurController {
     public ResponseEntity<Void> supprimer(@PathVariable UUID id) {
         service.supprimer(id);
         return ResponseEntity.noContent().build();
+    }
+
+    /** Historique d'un compte (ADMIN, ou l'utilisateur lui-même) : actions du plus récent au plus ancien, paginées (page, perPage). */
+    @GetMapping("/{id}/history")
+    public PageResponse<EvenementHistoriqueResponse> historique(
+            @PathVariable UUID id,
+            @RequestParam(required = false) Integer page, @RequestParam(required = false) Integer perPage) {
+        return historique.utilisateur(id, PaginationConfig.creer(page, perPage, null, null, Map.of(), HistoriqueService.TRI));
     }
 }

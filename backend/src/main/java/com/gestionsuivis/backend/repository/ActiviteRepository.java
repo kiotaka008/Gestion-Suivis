@@ -22,6 +22,10 @@ public interface ActiviteRepository extends JpaRepository<Activite, UUID>, JpaSp
 
     List<Activite> findByProjetId(UUID projetId);
 
+    /** Identifiants des activités d'un projet (historique du projet). */
+    @Query("select a.id from Activite a where a.projet.id = :projet")
+    List<UUID> idsDuProjet(@Param("projet") UUID projetId);
+
     long countByResponsableId(UUID responsableId);
 
     @EntityGraph(attributePaths = {"projet", "responsable"})

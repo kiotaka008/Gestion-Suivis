@@ -6,10 +6,13 @@ import com.gestionsuivis.backend.dto.auth.ConnexionRequest;
 import com.gestionsuivis.backend.dto.auth.ConnexionResponse;
 import com.gestionsuivis.backend.dto.auth.InscriptionRequest;
 import com.gestionsuivis.backend.dto.utilisateur.UtilisateurResponse;
+import com.gestionsuivis.backend.exception.IdentifiantsInvalidesException;
 import com.gestionsuivis.backend.security.CookieAuthentification;
+import com.gestionsuivis.backend.security.LimiteurConnexion;
 import com.gestionsuivis.backend.security.SecuriteProperties;
 import com.gestionsuivis.backend.security.VerificateurGoogle;
 import com.gestionsuivis.backend.service.AuthService;
+import jakarta.servlet.http.HttpServletRequest;
 import jakarta.validation.Valid;
 import lombok.RequiredArgsConstructor;
 import org.springframework.http.HttpHeaders;
@@ -36,11 +39,28 @@ public class AuthController {
     private final AuthService authService;
     private final SecuriteProperties securite;
     private final VerificateurGoogle google;
+    private final LimiteurConnexion limiteur;
 
-    /** Connexion : 200 {@code { user }} + cookie, 401 si les identifiants sont incorrects. */
+    /**
+     * Connexion : 200 {@code { user }} + cookie, 401 si les identifiants sont incorrects,
+     * 429 après trop d'échecs (voir {@link LimiteurConnexion}).
+     */
     @PostMapping("/login")
-    public ResponseEntity<ConnexionResponse> connecter(@Valid @RequestBody ConnexionRequest requete) {
-        return avecCookie(authService.connecter(requete));
+    public ResponseEntity<ConnexionResponse> connecter(@Valid @RequestBody ConnexionRequest requete,
+                                                       HttpServletRequest http) {
+        // Adresse du client telle que résolue par le serveur (X-Forwarded-For n'est pris en compte
+        // que si les proxies de confiance sont configurés : server.forward-headers-strategy).
+        String ip = http.getRemoteAddr();
+        limiteur.verifier(requete.email(), ip);
+        AuthService.ResultatConnexion resultat;
+        try {
+            resultat = authService.connecter(requete);
+        } catch (IdentifiantsInvalidesException e) {
+            limiteur.enregistrerEchec(requete.email(), ip);
+            throw e;
+        }
+        limiteur.enregistrerSucces(requete.email(), ip);
+        return avecCookie(resultat);
     }
 
     private ResponseEntity<ConnexionResponse> avecCookie(AuthService.ResultatConnexion resultat) {
@@ -55,8 +75,17 @@ public class AuthController {
      * jeton d'identité de Google Identity Services. Même réponse que {@code /login}.
      */
     @PostMapping("/google")
-    public ResponseEntity<ConnexionResponse> connecterAvecGoogle(@Valid @RequestBody ConnexionGoogleRequest requete) {
-        return avecCookie(authService.connecterAvecGoogle(requete));
+    public ResponseEntity<ConnexionResponse> connecterAvecGoogle(@Valid @RequestBody ConnexionGoogleRequest requete,
+                                                                 HttpServletRequest http) {
+        // L'email n'est connu qu'après vérification du jeton : seule la limite par adresse IP s'applique.
+        String ip = http.getRemoteAddr();
+        limiteur.verifier(null, ip);
+        try {
+            return avecCookie(authService.connecterAvecGoogle(requete));
+        } catch (IdentifiantsInvalidesException e) {
+            limiteur.enregistrerEchec(null, ip);
+            throw e;
+        }
     }
 
     /** Configuration publique de la connexion Google : {@code { enabled, clientId }}. */

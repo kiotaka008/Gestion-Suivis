@@ -28,6 +28,10 @@ import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
 import java.util.UUID;
+import java.util.ArrayList;
+import java.util.List;
+import java.util.Map;
+import java.util.Objects;
 
 /**
  * Gestion des utilisateurs de l'organisation : consultation selon le périmètre,
@@ -93,6 +97,16 @@ public class UtilisateurService {
         UtilisateurConnecte u = utilisateurCourant.obtenir();
         controle.verifierAdmin(u);
         Utilisateur utilisateur = charger(id);
+        // Noms des champs modifiés uniquement (jamais l'email ni les autres valeurs).
+        List<String> champs = new ArrayList<>();
+        AuditService.siModifie(champs, "name", utilisateur.getNom(), requete.name() == null ? null : requete.name().trim());
+        if (requete.email() != null && !requete.email().trim().equalsIgnoreCase(utilisateur.getEmail())) {
+            champs.add("email");
+        }
+        AuditService.siModifie(champs, "role", utilisateur.getRole(), requete.role());
+        if (requete.avatarUrl() != null && !Objects.equals(utilisateur.getAvatarUrl(), vide(requete.avatarUrl()))) {
+            champs.add("avatarUrl");
+        }
         if (requete.name() != null) {
             utilisateur.setNom(requete.name().trim());
         }
@@ -105,7 +119,7 @@ public class UtilisateurService {
         if (requete.avatarUrl() != null) {
             utilisateur.setAvatarUrl(vide(requete.avatarUrl()));
         }
-        audit.journaliser(u.id(), "updated", AuditService.UTILISATEUR, id);
+        audit.journaliser(u.id(), "updated", AuditService.UTILISATEUR, id, Map.of(AuditService.CLE_CHAMPS, champs));
         return mapper.versDto(utilisateur);
     }
 

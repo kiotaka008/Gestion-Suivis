@@ -31,6 +31,11 @@ import org.springframework.transaction.annotation.Transactional;
 import java.time.Clock;
 import java.time.LocalDate;
 import java.util.UUID;
+import java.util.ArrayList;
+import java.util.HashMap;
+import java.util.List;
+import java.util.Map;
+import java.util.Objects;
 
 /**
  * Activités et tâches : CRUD, affectation, priorités, statuts et dates. La personne
@@ -105,6 +110,10 @@ public class ActiviteService {
         }
         avancement.recalculer(projet);
         audit.journaliser(u.id(), "created", AuditService.ACTIVITE, enregistree.getId());
+        // Visible aussi dans l'historique du projet (même après suppression de l'activité).
+        audit.journaliser(u.id(), "activity_created", AuditService.PROJET, projet.getId(),
+                AuditService.details(AuditService.CLE_ACTIVITE, enregistree.getId(),
+                        AuditService.CLE_TITRE_ACTIVITE, enregistree.getTitre()));
         return versDto(enregistree);
     }
 
@@ -124,6 +133,23 @@ public class ActiviteService {
         }
         ProjetService.verifierDates(requete.startDate() != null ? requete.startDate() : activite.getDateDebut(),
                 requete.dueDate() != null ? requete.dueDate() : activite.getDateEcheance());
+
+        // Champs réellement modifiés (noms seulement), pour l'historique.
+        List<String> champs = new ArrayList<>();
+        AuditService.siModifie(champs, "title", activite.getTitre(),
+                requete.title() == null ? null : requete.title().trim());
+        if (requete.description() != null
+                && !Objects.equals(activite.getDescription(), vide(requete.description()))) {
+            champs.add("description");
+        }
+        AuditService.siModifie(champs, "priority", activite.getPriorite(), requete.priority());
+        AuditService.siModifie(champs, "startDate", activite.getDateDebut(), requete.startDate());
+        AuditService.siModifie(champs, "dueDate", activite.getDateEcheance(), requete.dueDate());
+        AuditService.siModifie(champs, "progress", activite.getAvancement(), requete.progress());
+        AuditService.siModifie(champs, "assigneeId",
+                activite.getResponsable() == null ? null : activite.getResponsable().getId(), requete.assigneeId());
+        AuditService.siModifie(champs, "status", activite.getStatut(), requete.status());
+        boolean statutModifie = champs.contains("status");
 
         if (requete.title() != null) {
             activite.setTitre(requete.title().trim());
@@ -155,6 +181,14 @@ public class ActiviteService {
             }
         }
         avancement.recalculer(activite.getProjet());
+        if (!champs.isEmpty()) {
+            Map<String, Object> details = new HashMap<>();
+            details.put(AuditService.CLE_CHAMPS, champs);
+            if (statutModifie) {
+                details.put(AuditService.CLE_STATUT, activite.getStatut().json());
+            }
+            audit.journaliser(u.id(), "updated", AuditService.ACTIVITE, id, details);
+        }
         return versDto(activite);
     }
 
@@ -164,10 +198,13 @@ public class ActiviteService {
         Activite activite = charger(id);
         controle.verifierGererActivite(u, activite);
         Projet projet = activite.getProjet();
+        String titre = activite.getTitre();
         activites.delete(activite);
         activites.flush();
         avancement.recalculer(projet);
         audit.journaliser(u.id(), "deleted", AuditService.ACTIVITE, id);
+        audit.journaliser(u.id(), "activity_deleted", AuditService.PROJET, projet.getId(),
+                AuditService.details(AuditService.CLE_ACTIVITE, id, AuditService.CLE_TITRE_ACTIVITE, titre));
     }
 
     // ---------------------------------------------------------------- utilitaires

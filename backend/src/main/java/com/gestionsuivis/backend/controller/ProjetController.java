@@ -1,5 +1,7 @@
 package com.gestionsuivis.backend.controller;
 
+import com.gestionsuivis.backend.service.HistoriqueService;
+import com.gestionsuivis.backend.dto.historique.EvenementHistoriqueResponse;
 import com.gestionsuivis.backend.config.PaginationConfig;
 import com.gestionsuivis.backend.dto.IdentifiantUtilisateurRequest;
 import com.gestionsuivis.backend.dto.PageResponse;
@@ -45,6 +47,7 @@ public class ProjetController {
             "createdAt", "dateCreation", "updatedAt", "dateModification");
 
     private final ProjetService service;
+    private final HistoriqueService historique;
     private final ActiviteService activiteService;
 
     @GetMapping
@@ -104,5 +107,13 @@ public class ProjetController {
                 id, null, null,
                 PaginationConfig.creer(page, perPage, sortBy, sortOrder, ActiviteController.TRIS,
                         Sort.by("dateEcheance")));
+    }
+
+    /** Historique du projet et de ses activités : actions du plus récent au plus ancien, paginées (page, perPage). */
+    @GetMapping("/{id}/history")
+    public PageResponse<EvenementHistoriqueResponse> historique(
+            @PathVariable UUID id,
+            @RequestParam(required = false) Integer page, @RequestParam(required = false) Integer perPage) {
+        return historique.projet(id, PaginationConfig.creer(page, perPage, null, null, Map.of(), HistoriqueService.TRI));
     }
 }

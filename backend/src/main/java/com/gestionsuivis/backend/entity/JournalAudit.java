@@ -1,22 +1,26 @@
 package com.gestionsuivis.backend.entity;
 
 import jakarta.persistence.Column;
+import jakarta.persistence.Convert;
 import jakarta.persistence.Entity;
 import jakarta.persistence.Id;
 import jakarta.persistence.Table;
 import lombok.Getter;
 import lombok.NoArgsConstructor;
 import lombok.Setter;
+import org.hibernate.annotations.ColumnTransformer;
 import org.hibernate.annotations.CreationTimestamp;
 import org.hibernate.annotations.TenantId;
 import org.hibernate.annotations.UuidGenerator;
 
 import java.time.Instant;
+import java.util.Map;
 import java.util.UUID;
 
 /**
  * Entrée du journal d'audit : table {@code audit_logs}. La colonne {@code metadata}
- * (JSONB, facultative) n'est pas utilisée par le backend.
+ * (JSONB, facultative) porte les détails non sensibles de l'action (champs modifiés, statut,
+ * activité ou membre concerné), filtrés par {@code AuditService}.
  */
 @Getter
 @Setter
@@ -45,6 +49,11 @@ public class JournalAudit {
 
     @Column(name = "entity_id")
     private UUID entiteId;
+
+    @Convert(converter = ConvertisseurMetadonneesAudit.class)
+    @ColumnTransformer(read = "metadata::text", write = "?::jsonb")
+    @Column(name = "metadata", columnDefinition = "jsonb")
+    private Map<String, Object> metadonnees;
 
     @CreationTimestamp
     @Column(name = "created_at", nullable = false, updatable = false)

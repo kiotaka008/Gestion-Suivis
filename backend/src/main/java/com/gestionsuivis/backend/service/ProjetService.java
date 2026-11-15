@@ -35,6 +35,10 @@ import java.util.LinkedHashSet;
 import java.util.List;
 import java.util.Set;
 import java.util.UUID;
+import java.util.ArrayList;
+import java.util.HashMap;
+import java.util.Map;
+import java.util.Objects;
 
 /**
  * Projets : CRUD, chef de projet, membres ({@code project_members}), dates et
@@ -115,6 +119,20 @@ public class ProjetService {
         verifierDates(requete.startDate() != null ? requete.startDate() : projet.getDateDebut(),
                 requete.dueDate() != null ? requete.dueDate() : projet.getDateEcheance());
 
+        // Champs réellement modifiés (noms seulement), pour l'historique.
+        List<String> champs = new ArrayList<>();
+        AuditService.siModifie(champs, "name", projet.getNom(), requete.name() == null ? null : requete.name().trim());
+        if (requete.description() != null && !Objects.equals(projet.getDescription(), vide(requete.description()))) {
+            champs.add("description");
+        }
+        AuditService.siModifie(champs, "status", projet.getStatut(), requete.status());
+        AuditService.siModifie(champs, "priority", projet.getPriorite(), requete.priority());
+        AuditService.siModifie(champs, "startDate", projet.getDateDebut(), requete.startDate());
+        AuditService.siModifie(champs, "dueDate", projet.getDateEcheance(), requete.dueDate());
+        AuditService.siModifie(champs, "ownerId", projet.getChefDeProjet().getId(), requete.ownerId());
+        Set<UUID> membresAvant = new LinkedHashSet<>(
+                projet.utilisateursMembres().stream().map(Utilisateur::getId).toList());
+
         if (requete.name() != null) {
             projet.setNom(requete.name().trim());
         }
@@ -149,7 +167,16 @@ public class ProjetService {
             membres.forEach(m -> projet.ajouterMembre(m, RoleMembreProjet.MEMBRE));
             notifierMembres(projet, membres.stream().filter(m -> !anciens.contains(m.getId())).toList(), u.id());
         }
-        audit.journaliser(u.id(), "updated", AuditService.PROJET, id);
+        if (requete.memberIds() != null && !membresAvant.equals(new LinkedHashSet<>(
+                projet.utilisateursMembres().stream().map(Utilisateur::getId).toList()))) {
+            champs.add("memberIds");
+        }
+        Map<String, Object> details = new HashMap<>();
+        details.put(AuditService.CLE_CHAMPS, champs);
+        if (champs.contains("status")) {
+            details.put(AuditService.CLE_STATUT, projet.getStatut().json());
+        }
+        audit.journaliser(u.id(), "updated", AuditService.PROJET, id, details);
         return versDto(projet);
     }
 
@@ -175,6 +202,8 @@ public class ProjetService {
         Utilisateur membre = utilisateurActifPourChamp(utilisateurId, "userId");
         if (projet.ajouterMembre(membre, RoleMembreProjet.MEMBRE)) {
             notifierMembres(projet, List.of(membre), u.id());
+            audit.journaliser(u.id(), "member_added", AuditService.PROJET, id,
+                    AuditService.details(AuditService.CLE_MEMBRE, membre.getId()));
         }
         return versDto(projet);
     }
@@ -182,13 +211,16 @@ public class ProjetService {
     @Transactional
     public ProjetResponse retirerMembre(UUID id, UUID utilisateurId) {
         Projet projet = charger(id);
-        controle.verifierGererProjet(utilisateurCourant.obtenir(), projet);
+        UtilisateurConnecte u = utilisateurCourant.obtenir();
+        controle.verifierGererProjet(u, projet);
         if (projet.getChefDeProjet().getId().equals(utilisateurId)) {
             throw new ConflitMetierException("Le chef de projet ne peut pas être retiré des membres.");
         }
         if (!projet.retirerMembre(utilisateurId)) {
             throw new RessourceIntrouvableException("Cet utilisateur n'est pas membre du projet.");
         }
+        audit.journaliser(u.id(), "member_removed", AuditService.PROJET, id,
+                AuditService.details(AuditService.CLE_MEMBRE, utilisateurId));
         return versDto(projet);
     }
 

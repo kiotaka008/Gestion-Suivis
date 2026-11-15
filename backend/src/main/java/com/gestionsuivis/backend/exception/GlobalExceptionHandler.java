@@ -156,6 +156,18 @@ public class GlobalExceptionHandler {
         return repondre(HttpStatus.BAD_REQUEST, ex.getMessage(), requete);
     }
 
+    // ---------------------------------------------------------------- 429
+
+    /** Trop de tentatives de connexion échouées : 429 + Retry-After (secondes). */
+    @ExceptionHandler(TropDeTentativesException.class)
+    public ResponseEntity<ErreurResponse> gererTropDeTentatives(TropDeTentativesException ex,
+                                                                HttpServletRequest requete) {
+        HttpStatus statut = HttpStatus.TOO_MANY_REQUESTS;
+        return ResponseEntity.status(statut)
+                .header(HttpHeaders.RETRY_AFTER, String.valueOf(Math.max(1, ex.getDelaiAvantNouvelEssai().toSeconds())))
+                .body(ErreurResponse.de(statut, ex.getMessage(), requete.getRequestURI()));
+    }
+
     // ---------------------------------------------------------------- 401 / 403
 
     @ExceptionHandler(IdentifiantsInvalidesException.class)
