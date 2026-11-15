@@ -19,6 +19,14 @@ public final class MessagesErreur {
     public static final String JETON_CSRF_INVALIDE = "Jeton de sécurité (CSRF) absent ou invalide. Rechargez la page.";
     public static final String RESSOURCE_INEXISTANTE = "La ressource demandée n'existe pas.";
     public static final String CONFLIT_DONNEES = "L'opération est en conflit avec des données existantes.";
+    public static final String CONFLIT_SLUG_ORGANISATION = "Ce nom d'organisation est déjà utilisé.";
+    public static final String CONFLIT_EMAIL = "Cet email est déjà utilisé.";
+    /** Verrouillage optimiste : la version lue n'est plus la version en base. */
+    public static final String RESSOURCE_MODIFIEE =
+            "Cette ressource a été modifiée par quelqu'un d'autre. Rechargez-la avant de réessayer.";
+    /** Verrou pessimiste indisponible (délai dépassé, interblocage) : réessai conseillé. */
+    public static final String SERVICE_OCCUPE =
+            "Le service est temporairement occupé. Réessayez dans quelques instants.";
     public static final String TYPE_CONTENU_NON_SUPPORTE =
             "Le type de contenu n'est pas pris en charge. Utilisez application/json.";
     public static final String VALEUR_INVALIDE = "Valeur invalide.";

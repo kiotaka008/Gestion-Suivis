@@ -27,8 +27,14 @@ import org.springframework.web.servlet.resource.NoResourceFoundException;
 import tools.jackson.core.JacksonException;
 import tools.jackson.databind.DatabindException;
 
+import java.sql.SQLException;
+import java.util.ArrayDeque;
 import java.util.ArrayList;
+import java.util.Collections;
+import java.util.IdentityHashMap;
 import java.util.List;
+import java.util.Map;
+import java.util.Set;
 
 /**
  * Gestion centralisée des erreurs levées par les contrôleurs et les services.
@@ -49,6 +55,45 @@ import java.util.List;
 @Slf4j
 @RestControllerAdvice
 public class GlobalExceptionHandler {
+
+    /** SQLState PostgreSQL : violation d'unicité. */
+    static final String ETAT_UNICITE = "23505";
+    /** SQLState PostgreSQL : violation de clé étrangère. */
+    static final String ETAT_CLE_ETRANGERE = "23503";
+    /** SQLState PostgreSQL : verrou indisponible ({@code lock_timeout}, {@code NOWAIT}). */
+    static final String ETAT_VERROU_INDISPONIBLE = "55P03";
+    /** SQLState PostgreSQL : interblocage détecté. */
+    static final String ETAT_INTERBLOCAGE = "40P01";
+    /** Délai conseillé (secondes) avant un nouvel essai après un verrou indisponible. */
+    static final String RETRY_AFTER_VERROU = "2";
+
+    /**
+     * Contraintes d'unicité reconnues et message métier associé. Noms tirés de
+     * {@code ProjectManager_SaaS_Database/database/migrations/20260930_001_projectmanager_initial_schema.sql} :
+     * <ul>
+     *   <li>{@code users_org_email_unique} : nommée explicitement, {@code UNIQUE (organization_id, email)} ;</li>
+     *   <li>{@code organizations_slug_key} : {@code slug ... UNIQUE} déclaré sur la colonne, nommé par
+     *       PostgreSQL selon sa règle par défaut {@code <table>_<colonne>_key}.</li>
+     * </ul>
+     * Les contraintes {@code *_org_id_id_unique} (clés composites servant aux clés étrangères) ne
+     * correspondent à aucune saisie de l'utilisateur : elles gardent le message 409 générique.
+     */
+    static final Map<String, String> MESSAGES_CONTRAINTES_UNIQUES = Map.of(
+            "users_org_email_unique", MessagesErreur.CONFLIT_EMAIL,
+            "organizations_slug_key", MessagesErreur.CONFLIT_SLUG_ORGANISATION);
+
+    /** Échec d'acquisition d'un verrou pessimiste (Spring, JPA, Hibernate brut) : 503. */
+    private static final List<Class<? extends Throwable>> EXCEPTIONS_VERROU_PESSIMISTE = List.of(
+            org.springframework.dao.PessimisticLockingFailureException.class, // dont CannotAcquireLockException
+            jakarta.persistence.PessimisticLockException.class,
+            jakarta.persistence.LockTimeoutException.class,
+            org.hibernate.PessimisticLockException.class); // dont LockAcquisitionException, LockTimeoutException
+
+    /** Conflit de verrou optimiste (version périmée) : 409. */
+    private static final List<Class<? extends Throwable>> EXCEPTIONS_VERROU_OPTIMISTE = List.of(
+            org.springframework.dao.OptimisticLockingFailureException.class,
+            jakarta.persistence.OptimisticLockException.class,
+            org.hibernate.StaleStateException.class);
 
     // ---------------------------------------------------------------- 422
 
@@ -241,15 +286,43 @@ public class GlobalExceptionHandler {
     }
 
     /**
-     * Violation d'une contrainte PostgreSQL (unicité, clé étrangère, NOT NULL).
-     * Le message SQL d'origine n'est jamais renvoyé au client.
+     * Violation d'une contrainte PostgreSQL, classée selon le SQLState réel :
+     * <ul>
+     *   <li>{@code 23505} (unicité) : 409, avec un message précis si la contrainte est connue
+     *       ({@link #MESSAGES_CONTRAINTES_UNIQUES}), sinon le message 409 générique ;</li>
+     *   <li>{@code 23503} (clé étrangère) : 409 générique ;</li>
+     *   <li>{@code 23514}, {@code 23502}, {@code 22xxx}, autre état ou état absent : 500 générique
+     *       (donnée que l'application aurait dû refuser avant la base).</li>
+     * </ul>
+     * Le message SQL, le nom de la contrainte et les valeurs ne sont jamais renvoyés au client ;
+     * le SQLState et le nom de la contrainte sont seulement journalisés.
      */
     @ExceptionHandler(DataIntegrityViolationException.class)
     public ResponseEntity<ErreurResponse> gererIntegriteDonnees(DataIntegrityViolationException ex,
                                                                 HttpServletRequest requete) {
-        log.warn("Violation d'intégrité des données sur {} : {}", requete.getRequestURI(),
-                ex.getMostSpecificCause().getClass().getSimpleName());
-        return repondre(HttpStatus.CONFLICT, MessagesErreur.CONFLIT_DONNEES, requete);
+        HttpStatus statutVerrou = statutConflitVerrou(ex);
+        if (statutVerrou != null) {
+            return repondreConflitVerrou(statutVerrou, ex, requete);
+        }
+
+        if (contientEtatSql(ex, ETAT_UNICITE)) {
+            String contrainte = contrainteUniqueReconnue(ex);
+            log.warn("Violation d'unicité (SQLState {}) sur {} {} : contrainte {}", ETAT_UNICITE,
+                    requete.getMethod(), requete.getRequestURI(), contrainte == null ? "non reconnue" : contrainte);
+            String message = contrainte == null
+                    ? MessagesErreur.CONFLIT_DONNEES
+                    : MESSAGES_CONTRAINTES_UNIQUES.get(contrainte);
+            return repondre(HttpStatus.CONFLICT, message, requete);
+        }
+        if (contientEtatSql(ex, ETAT_CLE_ETRANGERE)) {
+            log.warn("Violation de clé étrangère (SQLState {}) sur {} {}", ETAT_CLE_ETRANGERE,
+                    requete.getMethod(), requete.getRequestURI());
+            return repondre(HttpStatus.CONFLICT, MessagesErreur.CONFLIT_DONNEES, requete);
+        }
+
+        log.error("Violation d'intégrité non prévue (SQLState {}) sur {} {}", premierEtatSql(ex),
+                requete.getMethod(), requete.getRequestURI(), ex);
+        return repondre(HttpStatus.INTERNAL_SERVER_ERROR, MessagesErreur.ERREUR_INTERNE, requete);
     }
 
     // ---------------------------------------------------------------- service IA
@@ -272,6 +345,15 @@ public class GlobalExceptionHandler {
      */
     @ExceptionHandler(Exception.class)
     public ResponseEntity<ErreurResponse> gererErreurInattendue(Exception ex, HttpServletRequest requete) {
+        HttpStatus statutVerrou = statutConflitVerrou(ex);
+        if (statutVerrou != null) {
+            return repondreConflitVerrou(statutVerrou, ex, requete);
+        }
+        DataIntegrityViolationException violation =
+                trouverCauseImbriquee(ex, DataIntegrityViolationException.class);
+        if (violation != null) {
+            return gererIntegriteDonnees(violation, requete);
+        }
         if (ex instanceof ErrorResponse reponseSpring && reponseSpring.getStatusCode().is4xxClientError()) {
             HttpStatusCode statut = reponseSpring.getStatusCode();
             return repondre(statut, MessagesErreur.generique(statut), requete);
@@ -281,6 +363,145 @@ public class GlobalExceptionHandler {
                 : HttpStatus.INTERNAL_SERVER_ERROR;
         log.error("Erreur inattendue sur {} {}", requete.getMethod(), requete.getRequestURI(), ex);
         return repondre(statut, MessagesErreur.ERREUR_INTERNE, requete);
+    }
+
+    // ---------------------------------------------------------------- conflits de verrou
+
+    /**
+     * 409 (verrou optimiste : la ressource a changé depuis sa lecture) ou 503 + {@code Retry-After}
+     * (verrou pessimiste indisponible : délai dépassé ou interblocage, un nouvel essai peut réussir).
+     * Le type d'exception et le SQLState sont journalisés, jamais renvoyés au client.
+     */
+    private ResponseEntity<ErreurResponse> repondreConflitVerrou(HttpStatus statut, Throwable ex,
+                                                                HttpServletRequest requete) {
+        log.warn("Conflit de verrou ({}) sur {} {} : {} (SQLState {})", statut.value(), requete.getMethod(),
+                requete.getRequestURI(), ex.getClass().getName(), premierEtatSql(ex));
+        ResponseEntity.BodyBuilder reponse = ResponseEntity.status(statut);
+        String message = MessagesErreur.RESSOURCE_MODIFIEE;
+        if (statut == HttpStatus.SERVICE_UNAVAILABLE) {
+            reponse.header(HttpHeaders.RETRY_AFTER, RETRY_AFTER_VERROU);
+            message = MessagesErreur.SERVICE_OCCUPE;
+        }
+        return reponse.body(ErreurResponse.de(statut, message, requete.getRequestURI()));
+    }
+
+    /**
+     * Statut d'un conflit de verrou trouvé n'importe où dans la chaîne des causes, ou {@code null}.
+     * Le pessimiste est testé en premier : un échec d'acquisition de verrou n'est jamais un 409.
+     */
+    private static HttpStatus statutConflitVerrou(Throwable ex) {
+        if (contientUneCause(ex, EXCEPTIONS_VERROU_PESSIMISTE)
+                || contientEtatSql(ex, ETAT_VERROU_INDISPONIBLE, ETAT_INTERBLOCAGE)) {
+            return HttpStatus.SERVICE_UNAVAILABLE;
+        }
+        if (contientUneCause(ex, EXCEPTIONS_VERROU_OPTIMISTE)) {
+            return HttpStatus.CONFLICT;
+        }
+        return null;
+    }
+
+    private static boolean contientUneCause(Throwable ex, List<Class<? extends Throwable>> types) {
+        return exceptionsImbriquees(ex).stream().anyMatch(cause -> types.stream().anyMatch(t -> t.isInstance(cause)));
+    }
+
+    private static <T extends Throwable> T trouverCauseImbriquee(Throwable ex, Class<T> type) {
+        return exceptionsImbriquees(ex).stream()
+                .filter(type::isInstance)
+                .map(type::cast)
+                .findFirst()
+                .orElse(null);
+    }
+
+    private static boolean contientEtatSql(Throwable ex, String... etats) {
+        Set<String> etatsRecherches = Set.of(etats);
+        return exceptionsImbriquees(ex).stream()
+                .filter(SQLException.class::isInstance)
+                .map(SQLException.class::cast)
+                .anyMatch(sql -> sql.getSQLState() != null && etatsRecherches.contains(sql.getSQLState()));
+    }
+
+    /** Premier SQLState non vide de la chaîne (journalisation uniquement), ou {@code "absent"}. */
+    private static String premierEtatSql(Throwable ex) {
+        return exceptionsImbriquees(ex).stream()
+                .filter(SQLException.class::isInstance)
+                .map(cause -> ((SQLException) cause).getSQLState())
+                .filter(etat -> etat != null && !etat.isBlank())
+                .findFirst()
+                .orElse("absent");
+    }
+
+    /**
+     * Nom de la contrainte d'unicité reconnue ({@link #MESSAGES_CONTRAINTES_UNIQUES}) violée par
+     * une erreur {@code 23505} de la chaîne, ou {@code null}. Le nom n'est retenu que s'il est porté
+     * par une exception d'état {@code 23505} : un nom présent dans une autre erreur SQL est ignoré.
+     * Sources, de la plus fiable à la moins fiable : nom extrait par Hibernate, champ
+     * {@code constraint} du message serveur PostgreSQL (lu par réflexion, le pilote n'étant présent
+     * qu'à l'exécution, et indépendant de la langue du serveur), texte du message.
+     */
+    private static String contrainteUniqueReconnue(Throwable ex) {
+        for (Throwable cause : exceptionsImbriquees(ex)) {
+            if (cause instanceof org.hibernate.exception.ConstraintViolationException violation
+                    && violation.getConstraintName() != null // Map.of refuse containsKey(null)
+                    && MESSAGES_CONTRAINTES_UNIQUES.containsKey(violation.getConstraintName())
+                    && (ETAT_UNICITE.equals(violation.getSQLState()) || contientEtatSql(violation, ETAT_UNICITE))) {
+                return violation.getConstraintName();
+            }
+            if (cause instanceof SQLException sql && ETAT_UNICITE.equals(sql.getSQLState())) {
+                String duPilote = contrainteDuPilote(sql);
+                if (duPilote != null && MESSAGES_CONTRAINTES_UNIQUES.containsKey(duPilote)) {
+                    return duPilote;
+                }
+                String message = sql.getMessage();
+                if (message != null) {
+                    for (String nom : MESSAGES_CONTRAINTES_UNIQUES.keySet()) {
+                        // Guillemets anglais (lc_messages = en) ou chevrons français (lc_messages = fr).
+                        if (message.contains("\"" + nom + "\"") || message.contains("« " + nom + " »")) {
+                            return nom;
+                        }
+                    }
+                }
+            }
+        }
+        return null;
+    }
+
+    /** {@code PSQLException.getServerErrorMessage().getConstraint()}, sans dépendance de compilation. */
+    private static String contrainteDuPilote(SQLException sql) {
+        try {
+            Object detail = sql.getClass().getMethod("getServerErrorMessage").invoke(sql);
+            if (detail == null) {
+                return null;
+            }
+            Object nom = detail.getClass().getMethod("getConstraint").invoke(detail);
+            return nom instanceof String texte ? texte : null;
+        } catch (ReflectiveOperationException | RuntimeException absent) {
+            return null;
+        }
+    }
+
+    private static List<Throwable> exceptionsImbriquees(Throwable racine) {
+        List<Throwable> resultat = new ArrayList<>();
+        if (racine == null) {
+            return resultat;
+        }
+
+        ArrayDeque<Throwable> aVisiter = new ArrayDeque<>();
+        Set<Throwable> visitees = Collections.newSetFromMap(new IdentityHashMap<>());
+        aVisiter.add(racine);
+        while (!aVisiter.isEmpty()) {
+            Throwable courante = aVisiter.removeFirst();
+            if (!visitees.add(courante)) {
+                continue;
+            }
+            resultat.add(courante);
+            if (courante.getCause() != null) {
+                aVisiter.addLast(courante.getCause());
+            }
+            if (courante instanceof SQLException sql && sql.getNextException() != null) {
+                aVisiter.addLast(sql.getNextException());
+            }
+        }
+        return resultat;
     }
 
     // ---------------------------------------------------------------- utilitaires

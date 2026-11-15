@@ -9,7 +9,10 @@ import jakarta.validation.constraints.NotBlank;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.springframework.core.MethodParameter;
+import org.springframework.dao.CannotAcquireLockException;
 import org.springframework.dao.DataIntegrityViolationException;
+import org.springframework.dao.OptimisticLockingFailureException;
+import org.springframework.dao.PessimisticLockingFailureException;
 import org.springframework.data.core.PropertyReferenceException;
 import org.springframework.data.core.TypeInformation;
 import org.springframework.http.HttpHeaders;
@@ -20,6 +23,7 @@ import org.springframework.http.ResponseEntity;
 import org.springframework.http.converter.HttpMessageNotReadableException;
 import org.springframework.mock.http.MockHttpInputMessage;
 import org.springframework.mock.web.MockHttpServletRequest;
+import org.springframework.orm.ObjectOptimisticLockingFailureException;
 import org.springframework.security.access.AccessDeniedException;
 import org.springframework.security.authentication.BadCredentialsException;
 import org.springframework.validation.BeanPropertyBindingResult;
@@ -34,6 +38,7 @@ import org.springframework.web.server.ResponseStatusException;
 import org.springframework.web.servlet.resource.NoResourceFoundException;
 import tools.jackson.databind.json.JsonMapper;
 
+import java.sql.SQLException;
 import java.time.Duration;
 import java.util.List;
 import java.util.Set;
@@ -223,16 +228,287 @@ class GlobalExceptionHandlerTest {
                 MediaType.TEXT_PLAIN, List.of(MediaType.APPLICATION_JSON)), requete), 415, "UNSUPPORTED_MEDIA_TYPE");
     }
 
+    // ---------------------------------------------------------------- 409 métier
+
     @Test
-    void conflits_renvoient409SansMessageSql() {
+    void conflitMetier_renvoie409AvecLeMessageDuService() {
         ErreurResponse metier = verifierBase(handler.gererConflitMetier(
                 new ConflitMetierException("Cet email est déjà utilisé."), requete), 409, "CONFLICT");
         assertThat(metier.message()).isEqualTo("Cet email est déjà utilisé.");
+    }
 
-        ErreurResponse sql = verifierBase(handler.gererIntegriteDonnees(new DataIntegrityViolationException(
-                "duplicate key value violates unique constraint \"users_email_key\" Key (email)=(jean@exemple.com)"),
-                requete), 409, "CONFLICT");
-        assertThat(serialiser(sql)).doesNotContain("duplicate").doesNotContain("jean@exemple.com");
+    // ---------------------------------------------------------------- verrou optimiste : 409 (tests 1 à 3)
+
+    @Test
+    void optimisticLockingFailureException_renvoie409() {
+        verifierConflitOptimiste(new ObjectOptimisticLockingFailureException("com.gestionsuivis.backend.entity.Projet",
+                "8f1c0000-0000-0000-0000-000000000000"));
+        verifierConflitOptimiste(new OptimisticLockingFailureException("update projects set version=? where id=?"));
+    }
+
+    @Test
+    void optimisticLockExceptionJpa_renvoie409() {
+        verifierConflitOptimiste(new jakarta.persistence.OptimisticLockException("update projects set version=?"));
+    }
+
+    @Test
+    void staleStateExceptionHibernate_renvoie409() {
+        verifierConflitOptimiste(new org.hibernate.StaleObjectStateException("com.gestionsuivis.backend.entity.Projet",
+                "8f1c0000-0000-0000-0000-000000000000"));
+        verifierConflitOptimiste(new org.hibernate.StaleStateException("update projects set version=?"));
+    }
+
+    // ---------------------------------------------------------------- verrou pessimiste : 503 (tests 4 à 7)
+
+    @Test
+    void pessimisticLockingFailureException_renvoie503EtRetryAfter2() {
+        verifierVerrouIndisponible(new PessimisticLockingFailureException("select ... for update"));
+        // Exceptions brutes JPA et Hibernate (EntityManager utilisé hors @Repository : non traduites).
+        verifierVerrouIndisponible(new jakarta.persistence.PessimisticLockException("select ... for update"));
+        verifierVerrouIndisponible(new jakarta.persistence.LockTimeoutException("select ... for update"));
+        verifierVerrouIndisponible(new org.hibernate.PessimisticLockException("select ... for update",
+                new SQLException("lock", "55P03"), "select * from projects for update"));
+    }
+
+    @Test
+    void cannotAcquireLockException_renvoie503() {
+        verifierVerrouIndisponible(new CannotAcquireLockException("could not obtain lock on row in relation projects"));
+        verifierVerrouIndisponible(new org.hibernate.exception.LockAcquisitionException("deadlock",
+                new SQLException("deadlock detected", "40P01"), "update projects set name=?"));
+    }
+
+    @Test
+    void etatSql55P03_renvoie503() {
+        verifierVerrouIndisponible(new IllegalStateException("enveloppe",
+                new SQLException("canceling statement due to lock timeout", "55P03")));
+        // Une 55P03 classée par Spring comme violation d'intégrité reste un 503.
+        verifierVerrouIndisponible(new DataIntegrityViolationException("enveloppe",
+                new SQLException("could not obtain lock on row in relation projects", "55P03")));
+    }
+
+    @Test
+    void etatSql40P01_renvoie503() {
+        verifierVerrouIndisponible(new IllegalStateException("enveloppe",
+                new SQLException("deadlock detected", "40P01")));
+        // État porté par une exception JDBC « suivante » (getNextException).
+        SQLException premiere = new SQLException("autre erreur SQL", "99999");
+        premiere.setNextException(new SQLException("deadlock detected", "40P01"));
+        verifierVerrouIndisponible(new IllegalStateException("enveloppe", premiere));
+    }
+
+    // ---------------------------------------------------------------- violations d'intégrité (tests 8 à 14)
+
+    /** Ancien {@code conflits_renvoient409SansMessageSql}, partie SQL : une contrainte reconnue → 409 précis. */
+    @Test
+    void etatSql23505Reconnu_renvoie409AvecMessagePrecis() {
+        ErreurResponse email = verifierIntegrite(new DataIntegrityViolationException("enveloppe", new SQLException(
+                "duplicate key value violates unique constraint \"users_org_email_unique\" "
+                        + "Detail: Key (organization_id, email)=(0f0e, jean@exemple.com) already exists.", "23505")),
+                409, "CONFLICT");
+        assertThat(email.message()).isEqualTo(MessagesErreur.CONFLIT_EMAIL);
+
+        ErreurResponse slug = verifierIntegrite(new DataIntegrityViolationException("enveloppe", new SQLException(
+                "duplicate key value violates unique constraint \"organizations_slug_key\" Key (slug)=(secret)",
+                "23505")), 409, "CONFLICT");
+        assertThat(slug.message()).isEqualTo(MessagesErreur.CONFLIT_SLUG_ORGANISATION);
+
+        // Serveur PostgreSQL en français (lc_messages = fr_FR).
+        ErreurResponse francais = verifierIntegrite(new DataIntegrityViolationException("enveloppe", new SQLException(
+                "la valeur d'une clé dupliquée rompt la contrainte unique « users_org_email_unique »", "23505")),
+                409, "CONFLICT");
+        assertThat(francais.message()).isEqualTo(MessagesErreur.CONFLIT_EMAIL);
+
+        // Nom extrait par Hibernate (ConstraintViolationException.getConstraintName()).
+        ErreurResponse hibernate = verifierIntegrite(new DataIntegrityViolationException("enveloppe",
+                new org.hibernate.exception.ConstraintViolationException("insert into users ...",
+                        new SQLException("violation", "23505"), "insert into users ...", "users_org_email_unique")),
+                409, "CONFLICT");
+        assertThat(hibernate.message()).isEqualTo(MessagesErreur.CONFLIT_EMAIL);
+
+        // Nom fourni par le pilote PostgreSQL (ServerErrorMessage.getConstraint()), message muet.
+        ErreurResponse pilote = verifierIntegrite(new DataIntegrityViolationException("enveloppe",
+                new FausseExceptionPilote("erreur", "23505", "organizations_slug_key")), 409, "CONFLICT");
+        assertThat(pilote.message()).isEqualTo(MessagesErreur.CONFLIT_SLUG_ORGANISATION);
+    }
+
+    @Test
+    void etatSql23505Inconnu_renvoie409Generique() {
+        ErreurResponse inconnue = verifierIntegrite(new DataIntegrityViolationException("enveloppe", new SQLException(
+                "duplicate key value violates unique constraint \"users_email_key\" Key (email)=(secret)", "23505")),
+                409, "CONFLICT");
+        assertThat(inconnue.message()).isEqualTo(MessagesErreur.CONFLIT_DONNEES);
+
+        // Contrainte réelle mais sans message métier (clé composite technique).
+        ErreurResponse technique = verifierIntegrite(new DataIntegrityViolationException("enveloppe", new SQLException(
+                "duplicate key value violates unique constraint \"projects_org_id_id_unique\"", "23505")),
+                409, "CONFLICT");
+        assertThat(technique.message()).isEqualTo(MessagesErreur.CONFLIT_DONNEES);
+
+        // Nom reconnu présent seulement dans une erreur SQL d'un autre état : non retenu.
+        SQLException mixte = new SQLException("duplicate key", "23505");
+        mixte.setNextException(new SQLException(
+                "duplicate key value violates unique constraint \"organizations_slug_key\"", "99999"));
+        ErreurResponse nonAssocie = verifierIntegrite(new DataIntegrityViolationException("enveloppe", mixte),
+                409, "CONFLICT");
+        assertThat(nonAssocie.message()).isEqualTo(MessagesErreur.CONFLIT_DONNEES);
+
+        // Nom Hibernate absent : pas d'erreur, message générique.
+        ErreurResponse sansNom = verifierIntegrite(new DataIntegrityViolationException("enveloppe",
+                new org.hibernate.exception.ConstraintViolationException("insert",
+                        new SQLException("violation", "23505"), "insert", null)), 409, "CONFLICT");
+        assertThat(sansNom.message()).isEqualTo(MessagesErreur.CONFLIT_DONNEES);
+    }
+
+    @Test
+    void etatSql23503_renvoie409Generique() {
+        ErreurResponse corps = verifierIntegrite(new DataIntegrityViolationException("enveloppe", new SQLException(
+                "insert or update on table \"activities\" violates foreign key constraint \"activities_project_fk\" "
+                        + "Detail: Key (project_id)=(secret) is not present", "23503")), 409, "CONFLICT");
+        assertThat(corps.message()).isEqualTo(MessagesErreur.CONFLIT_DONNEES);
+    }
+
+    @Test
+    void etatSql23514_renvoie500Generique() {
+        verifierErreurInterne("23514", "new row for relation \"projects\" violates check constraint \"projects_progress_range\"");
+    }
+
+    @Test
+    void etatSql23502_renvoie500Generique() {
+        verifierErreurInterne("23502", "null value in column \"name\" of relation \"projects\" violates not-null constraint");
+    }
+
+    @Test
+    void etatSql22xxx_renvoie500Generique() {
+        verifierErreurInterne("22001", "value too long for type character varying(255) : secret");
+        verifierErreurInterne("22P02", "invalid input syntax for type uuid: \"secret\"");
+        verifierErreurInterne("99999", "état non prévu : secret");
+    }
+
+    @Test
+    void etatSqlAbsent_renvoie500Generique() {
+        // Ni cause SQL : seul le message de Spring, qui contient le SQL.
+        ErreurResponse sansCause = verifierIntegrite(new DataIntegrityViolationException(
+                "duplicate key value violates unique constraint \"users_org_email_unique\" (email)=(secret)"),
+                500, "SERVER_ERROR");
+        assertThat(sansCause.message()).isEqualTo(MessagesErreur.ERREUR_INTERNE);
+
+        // Cause SQL sans SQLState.
+        ErreurResponse sansEtat = verifierIntegrite(new DataIntegrityViolationException("enveloppe",
+                new SQLException("détail interne secret")), 500, "SERVER_ERROR");
+        assertThat(sansEtat.message()).isEqualTo(MessagesErreur.ERREUR_INTERNE);
+    }
+
+    // ---------------------------------------------------------------- causes imbriquées (test 15)
+
+    @Test
+    void exceptionEnveloppeeDansPlusieursCauses_classeeCorrectement() {
+        // 23505 reconnue sous trois niveaux, passée par le gestionnaire générique.
+        Exception unicite = new IllegalStateException("niveau 1", new RuntimeException("niveau 2",
+                new DataIntegrityViolationException("niveau 3", new RuntimeException("niveau 4", new SQLException(
+                        "duplicate key value violates unique constraint \"users_org_email_unique\"", "23505")))));
+        ErreurResponse corps = verifierBase(handler.gererErreurInattendue(unicite, requete), 409, "CONFLICT");
+        assertThat(corps.message()).isEqualTo(MessagesErreur.CONFLIT_EMAIL);
+        assertThat(serialiser(corps)).doesNotContain("users_org_email_unique");
+
+        // 23503 sous une cause intermédiaire.
+        ErreurResponse cleEtrangere = verifierIntegrite(new DataIntegrityViolationException("enveloppe",
+                new IllegalStateException("intermédiaire", new SQLException("détail secret", "23503"))),
+                409, "CONFLICT");
+        assertThat(cleEtrangere.message()).isEqualTo(MessagesErreur.CONFLIT_DONNEES);
+
+        // Verrou optimiste enveloppé (ex. dans une exception de transaction).
+        verifierConflitOptimiste(new IllegalStateException("commit impossible", new RuntimeException("rollback",
+                new org.hibernate.StaleStateException("update projects set version=?"))));
+
+        // Verrou pessimiste et violation d'intégrité dans la même chaîne : le 503 l'emporte.
+        verifierVerrouIndisponible(new DataIntegrityViolationException("enveloppe",
+                new RuntimeException("intermédiaire", new CannotAcquireLockException("lock"))));
+
+        // Chaîne cyclique : pas de boucle infinie, 500 générique.
+        RuntimeException a = new RuntimeException("a");
+        RuntimeException b = new RuntimeException("b", a);
+        a.initCause(b);
+        verifierBase(handler.gererErreurInattendue(a, requete), 500, "SERVER_ERROR");
+    }
+
+    // ---------------------------------------------------------------- utilitaires 409 / 503
+
+    private void verifierConflitOptimiste(Exception conflit) {
+        ResponseEntity<ErreurResponse> reponse = handler.gererErreurInattendue(conflit, requete);
+        ErreurResponse corps = verifierBase(reponse, 409, "CONFLICT");
+        assertThat(corps.message()).isEqualTo(MessagesErreur.RESSOURCE_MODIFIEE)
+                .isEqualTo("Cette ressource a été modifiée par quelqu'un d'autre. Rechargez-la avant de réessayer.");
+        assertThat(reponse.getHeaders().getFirst(HttpHeaders.RETRY_AFTER)).isNull();
+        verifierSansDetailInterne(corps);
+    }
+
+    private void verifierVerrouIndisponible(Exception verrou) {
+        ResponseEntity<ErreurResponse> reponse = verrou instanceof DataIntegrityViolationException violation
+                ? handler.gererIntegriteDonnees(violation, requete)
+                : handler.gererErreurInattendue(verrou, requete);
+        ErreurResponse corps = verifierBase(reponse, 503, "SERVER_ERROR");
+        assertThat(reponse.getHeaders().getFirst(HttpHeaders.RETRY_AFTER)).isEqualTo("2");
+        assertThat(corps.message()).isEqualTo(MessagesErreur.SERVICE_OCCUPE);
+        assertThat(corps.errors()).isEmpty();
+        verifierSansDetailInterne(corps);
+    }
+
+    private ErreurResponse verifierIntegrite(DataIntegrityViolationException violation, int statut, String code) {
+        ResponseEntity<ErreurResponse> reponse = handler.gererIntegriteDonnees(violation, requete);
+        ErreurResponse corps = verifierBase(reponse, statut, code);
+        assertThat(reponse.getHeaders().getFirst(HttpHeaders.RETRY_AFTER)).isNull();
+        verifierSansDetailInterne(corps);
+        return corps;
+    }
+
+    private void verifierErreurInterne(String etat, String messageSql) {
+        ErreurResponse corps = verifierIntegrite(new DataIntegrityViolationException("enveloppe",
+                new SQLException(messageSql, etat)), 500, "SERVER_ERROR");
+        assertThat(corps.message()).isEqualTo(MessagesErreur.ERREUR_INTERNE);
+        assertThat(sansHorodatage(corps)).doesNotContain(etat);
+    }
+
+    /** Ni SQL, ni nom de contrainte, ni valeur saisie, ni classe Java, ni SQLState dans la réponse. */
+    private static void verifierSansDetailInterne(ErreurResponse corps) {
+        assertThat(sansHorodatage(corps)).doesNotContainIgnoringCase("select").doesNotContainIgnoringCase("update ")
+                .doesNotContainIgnoringCase("insert").doesNotContainIgnoringCase("constraint")
+                .doesNotContain("users_org_email_unique").doesNotContain("organizations_slug_key")
+                .doesNotContain("users_email_key").doesNotContain("projects_org_id_id_unique")
+                .doesNotContain("jean@exemple.com").doesNotContain("secret").doesNotContain("Exception")
+                .doesNotContain("org.").doesNotContain("com.gestionsuivis").doesNotContain("deadlock")
+                .doesNotContain("55P03").doesNotContain("40P01").doesNotContain("23505").doesNotContain("23503");
+    }
+
+    /** JSON de la réponse sans l'horodatage, dont les chiffres pourraient former un SQLState. */
+    private static String sansHorodatage(ErreurResponse corps) {
+        return serialiser(corps).replaceAll("\"timestamp\":\"[^\"]*\"", "");
+    }
+
+    /** Simule {@code PSQLException} : nom de contrainte disponible via {@code getServerErrorMessage()}. */
+    public static final class FausseExceptionPilote extends SQLException {
+        private final transient MessageServeur detail;
+
+        FausseExceptionPilote(String message, String etat, String contrainte) {
+            super(message, etat);
+            this.detail = new MessageServeur(contrainte);
+        }
+
+        public MessageServeur getServerErrorMessage() {
+            return detail;
+        }
+    }
+
+    /** Simule {@code org.postgresql.util.ServerErrorMessage}. */
+    public static final class MessageServeur {
+        private final String contrainte;
+
+        MessageServeur(String contrainte) {
+            this.contrainte = contrainte;
+        }
+
+        public String getConstraint() {
+            return contrainte;
+        }
     }
 
     // ---------------------------------------------------------------- IA / 500
