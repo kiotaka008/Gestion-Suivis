@@ -110,3 +110,19 @@ def test_other_routes_in_mock_mode(client: TestClient, auth_headers: dict, mode_
     )
     assert classement.status_code == 200
     assert classement.json()["category"] == "bug"
+
+
+def test_chat_route_in_mock_mode_uses_shared_demo_answer(
+    client: TestClient, auth_headers: dict, mode_demo: None
+) -> None:
+    """Le chat utilise la même réponse de démonstration que les autres tâches (plus de texte figé)."""
+    response = client.post(
+        "/api/ai/chat",
+        headers=auth_headers,
+        json={"messages": [{"role": "user", "content": "Quelles activités sont en retard ?"}]},
+    )
+    assert response.status_code == 200
+    corps = response.json()
+    assert corps["message"]["content"] == contenu_simule(AITaskType.CHAT)
+    assert corps["model"] == MODELE_SIMULE
+    assert "refonte de site web" not in corps["message"]["content"]
