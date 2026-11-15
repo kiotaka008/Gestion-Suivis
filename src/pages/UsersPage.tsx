@@ -1,5 +1,8 @@
-import { useMemo, useState, useEffect } from 'react';
-import { Plus, Users } from 'lucide-react';
+import { useCallback, useMemo, useState, useEffect } from 'react';
+import { Edit, History, MoreVertical, Plus, Trash2, UserCheck, UserX, Users } from 'lucide-react';
+import { Modal } from '../components/ui/Modal';
+import { HistoryTimeline } from '../components/history/HistoryTimeline';
+import { Dropdown } from '../components/ui/Dropdown';
 import { Container } from '../components/ui/Container';
 import { PageHeader } from '../components/ui/PageHeader';
 import { Button } from '../components/ui/Button';
@@ -23,6 +26,8 @@ import type { User, Role } from '../types/models';
 import { Alert } from '../components/ui/Alert';
 import { userService, type CreateUserPayload } from '../services/userService';
 import { ApiError } from '../services/ApiError';
+import { useAuth } from '../hooks/useAuth';
+import { usePermissions } from '../hooks/usePermissions';
 
 function getRoleVariant(role: Role) {
   switch (role) {
@@ -41,8 +46,10 @@ function getRoleLabel(role: Role) {
 }
 
 export function UsersPage() {
+  const { user: moi } = useAuth();
+  const { canListUsers, canManageUsers } = usePermissions();
   const [users, setUsers] = useState<User[]>([]);
-  const [isLoading, setIsLoading] = useState(true);
+  const [isLoading, setIsLoading] = useState(canListUsers);
 
   const [search, setSearch] = useState('');
   const [role, setRole] = useState('all');
@@ -51,12 +58,21 @@ export function UsersPage() {
   const [view, setView] = useState<ViewMode>('table');
 
   const [isCreateOpen, setIsCreateOpen] = useState(false);
+  const [editTarget, setEditTarget] = useState<User | null>(null);
+  const [historyTarget, setHistoryTarget] = useState<User | null>(null);
+  // Source stable pour HistoryTimeline (sinon l'historique serait rechargé à chaque rendu).
+  const historyId = historyTarget?.id;
+  const chargerHistorique = useCallback(
+    (page: number, perPage: number) => userService.history(historyId ?? '', page, perPage),
+    [historyId]
+  );
   const [deleteTarget, setDeleteTarget] = useState<User | null>(null);
   const [isDeleting, setIsDeleting] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
   // Liste réservée aux ADMIN et MANAGER (403 sinon : le message du backend est affiché).
   useEffect(() => {
+    if (!canListUsers) return;
     let annule = false;
     userService
       .listAll()
@@ -72,7 +88,7 @@ export function UsersPage() {
     return () => {
       annule = true;
     };
-  }, []);
+  }, [canListUsers]);
 
   const filtered = useMemo(() => {
     let result = [...users];
@@ -96,6 +112,22 @@ export function UsersPage() {
   const handleCreate = async (data: CreateUserPayload) => {
     const cree = await userService.create(data);
     setUsers((prev) => [cree, ...prev]);
+  };
+
+  const handleUpdate = async (data: Pick<User, 'name' | 'email' | 'role'>) => {
+    if (!editTarget) return;
+    const modifie = await userService.update(editTarget.id, data);
+    setUsers((prev) => prev.map((u) => (u.id === modifie.id ? modifie : u)));
+  };
+
+  // Actions d'administration ; son propre compte ne peut être ni désactivé ni supprimé (règle du backend).
+  const actionsPour = (user: User) => {
+    const estMoi = user.id === moi?.id;
+    return {
+      onEdit: canManageUsers ? (u: User) => setEditTarget(u) : undefined,
+      onToggleActive: canManageUsers && !estMoi ? handleToggleActive : undefined,
+      onDelete: canManageUsers && !estMoi ? (u: User) => setDeleteTarget(u) : undefined,
+    };
   };
 
   const handleToggleActive = async (user: User) => {
@@ -128,8 +160,18 @@ export function UsersPage() {
       <PageHeader
         title="Utilisateurs"
         description="Gérez les membres de votre organisation."
-        actions={<Button leftIcon={<Plus className="h-4 w-4" />} onClick={() => setIsCreateOpen(true)}>Nouvel utilisateur</Button>}
+        actions={canManageUsers && <Button leftIcon={<Plus className="h-4 w-4" />} onClick={() => setIsCreateOpen(true)}>Nouvel utilisateur</Button>}
       />
+
+      {!canListUsers && (
+        <div className="mt-6">
+          <EmptyState
+            icon={<Users className="h-6 w-6" />}
+            title="Accès réservé"
+            description="La liste des utilisateurs est réservée aux administrateurs et aux responsables."
+          />
+        </div>
+      )}
 
       {error && (
         <Alert variant="danger" className="mt-6">
@@ -137,6 +179,7 @@ export function UsersPage() {
         </Alert>
       )}
 
+      {canListUsers && (<>
       <div className="mt-6">
         <UsersFilters
           search={search} onSearchChange={setSearch}
@@ -154,8 +197,8 @@ export function UsersPage() {
           <EmptyState
             icon={<Users className="h-6 w-6" />}
             title="Aucun utilisateur trouvé"
-            description="Ajustez vos filtres ou ajoutez un nouvel utilisateur."
-            action={<Button leftIcon={<Plus className="h-4 w-4" />} onClick={() => setIsCreateOpen(true)}>Ajouter un utilisateur</Button>}
+            description={canManageUsers ? 'Ajustez vos filtres ou ajoutez un nouvel utilisateur.' : 'Ajustez vos filtres.'}
+            action={canManageUsers && <Button leftIcon={<Plus className="h-4 w-4" />} onClick={() => setIsCreateOpen(true)}>Ajouter un utilisateur</Button>}
           />
         ) : view === 'table' ? (
           <div className="overflow-x-auto rounded-lg border border-border bg-surface">
@@ -167,6 +210,7 @@ export function UsersPage() {
                   <TableHeader>Rôle</TableHeader>
                   <TableHeader>Statut</TableHeader>
                   <TableHeader>Inscrit le</TableHeader>
+                  {canManageUsers && <TableHeader><span className="sr-only">Actions</span></TableHeader>}
                 </TableRow>
               </TableHead>
               <TableBody>
@@ -184,6 +228,27 @@ export function UsersPage() {
                     <TableCell className="text-sm text-muted-foreground">
                       {new Date(user.createdAt).toLocaleDateString('fr-FR', { day: '2-digit', month: 'short', year: 'numeric' })}
                     </TableCell>
+                    {canManageUsers && (
+                      <TableCell className="w-12 text-right">
+                        <Dropdown
+                          trigger={
+                            <button className="rounded-md p-1 text-muted-foreground hover:bg-muted" aria-label={`Actions pour ${user.name}`}>
+                              <MoreVertical className="h-4 w-4" />
+                            </button>
+                          }
+                          items={[
+                            actionsPour(user).onEdit && { label: 'Modifier', icon: <Edit className="h-4 w-4" />, onClick: () => setEditTarget(user) },
+                            canManageUsers && { label: 'Historique', icon: <History className="h-4 w-4" />, onClick: () => setHistoryTarget(user) },
+                            actionsPour(user).onToggleActive && {
+                              label: user.isActive ? 'Désactiver' : 'Activer',
+                              icon: user.isActive ? <UserX className="h-4 w-4" /> : <UserCheck className="h-4 w-4" />,
+                              onClick: () => handleToggleActive(user),
+                            },
+                            actionsPour(user).onDelete && { label: 'Supprimer', icon: <Trash2 className="h-4 w-4" />, variant: 'danger', onClick: () => setDeleteTarget(user) },
+                          ]}
+                        />
+                      </TableCell>
+                    )}
                   </TableRow>
                 ))}
               </TableBody>
@@ -192,13 +257,40 @@ export function UsersPage() {
         ) : (
           <div className="grid gap-4 md:grid-cols-2 lg:grid-cols-3">
             {filtered.map((user) => (
-              <UserCard key={user.id} user={user} onDelete={(u) => setDeleteTarget(u)} onToggleActive={handleToggleActive} />
+              <UserCard key={user.id} user={user} {...actionsPour(user)} />
             ))}
           </div>
         )}
       </div>
+      </>)}
 
       <CreateUserModal isOpen={isCreateOpen} onClose={() => setIsCreateOpen(false)} onCreate={handleCreate} />
+      {historyTarget && (
+        <Modal
+          isOpen
+          onClose={() => setHistoryTarget(null)}
+          title={`Historique de ${historyTarget.name}`}
+          description="Connexions et modifications du compte, de la plus récente à la plus ancienne."
+          size="lg"
+        >
+          <div className="max-h-[60vh] overflow-y-auto">
+            <HistoryTimeline
+              key={historyTarget.id}
+              load={chargerHistorique}
+            />
+          </div>
+        </Modal>
+      )}
+      {editTarget && (
+        <CreateUserModal
+          key={editTarget.id}
+          isOpen
+          user={editTarget}
+          onClose={() => setEditTarget(null)}
+          onCreate={() => undefined}
+          onUpdate={handleUpdate}
+        />
+      )}
       <ConfirmDialog isOpen={!!deleteTarget} onClose={() => setDeleteTarget(null)} onConfirm={handleDeleteConfirm} title="Supprimer l'utilisateur ?" description={`L'utilisateur "${deleteTarget?.name}" sera définitivement supprimé.`} confirmLabel="Supprimer" isLoading={isDeleting} />
     </Container>
   );

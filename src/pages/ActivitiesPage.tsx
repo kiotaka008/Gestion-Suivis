@@ -1,4 +1,5 @@
 import { useMemo, useState, useEffect } from 'react';
+import { useNavigate, useSearchParams } from 'react-router-dom';
 import { Plus, ClipboardList } from 'lucide-react';
 import { Container } from '../components/ui/Container';
 import { PageHeader } from '../components/ui/PageHeader';
@@ -19,11 +20,13 @@ import {
 import { ActivitiesFilters, type ViewMode } from '../components/activities/ActivitiesFilters';
 import { ActivityCard } from '../components/activities/ActivityCard';
 import { CreateActivityModal } from '../components/activities/CreateActivityModal';
-import type { Activity, ActivityStatus, Priority, Project } from '../types/models';
+import type { Activity, ActivityStatus, Priority, Project, User } from '../types/models';
 import { Alert } from '../components/ui/Alert';
 import { activityService } from '../services/activityService';
 import { projectService } from '../services/projectService';
 import { ApiError } from '../services/ApiError';
+import { userService } from '../services/userService';
+import { usePermissions } from '../hooks/usePermissions';
 
 function getStatusVariant(status: ActivityStatus) {
   switch (status) {
@@ -53,10 +56,21 @@ function getPriorityLabel(priority: Priority) {
 }
 
 export function ActivitiesPage() {
+  const navigate = useNavigate();
+  const permissions = usePermissions();
+  const [searchParams] = useSearchParams();
   const [activities, setActivities] = useState<Activity[]>([]);
   const [isLoading, setIsLoading] = useState(true);
 
-  const [search, setSearch] = useState('');
+  // Recherche transmise par la barre de recherche de l'en-tête (?search=...) : appliquée à
+  // l'ouverture de la page et à chaque nouvelle recherche, même si la page est déjà affichée.
+  const paramRecherche = searchParams.get('search') ?? '';
+  const [search, setSearch] = useState(paramRecherche);
+  const [dernierParam, setDernierParam] = useState(paramRecherche);
+  if (paramRecherche !== dernierParam) {
+    setDernierParam(paramRecherche);
+    setSearch(paramRecherche);
+  }
   const [status, setStatus] = useState('all');
   const [priority, setPriority] = useState('all');
   const [projectId, setProjectId] = useState('all');
@@ -64,19 +78,28 @@ export function ActivitiesPage() {
   const [view, setView] = useState<ViewMode>('table');
 
   const [isCreateOpen, setIsCreateOpen] = useState(false);
+  const [editTarget, setEditTarget] = useState<Activity | null>(null);
+  const [users, setUsers] = useState<User[]>([]);
   const [deleteTarget, setDeleteTarget] = useState<Activity | null>(null);
   const [isDeleting, setIsDeleting] = useState(false);
   const [projects, setProjects] = useState<Project[]>([]);
   const [error, setError] = useState<string | null>(null);
 
-  // Chargement des activités et des projets visibles (filtres, création, noms de projet).
+  // Chargement des activités, des projets visibles (filtres, création, noms de projet) et,
+  // pour les administrateurs et responsables, des utilisateurs (choix du responsable).
+  const { canListUsers } = permissions;
   useEffect(() => {
     let annule = false;
-    Promise.all([activityService.listAll(), projectService.listAll()])
-      .then(([listeActivites, listeProjets]) => {
+    Promise.all([
+      activityService.listAll(),
+      projectService.listAll(),
+      canListUsers ? userService.listAll() : Promise.resolve<User[]>([]),
+    ])
+      .then(([listeActivites, listeProjets, listeUtilisateurs]) => {
         if (annule) return;
         setActivities(listeActivites);
         setProjects(listeProjets);
+        setUsers(listeUtilisateurs);
       })
       .catch((err) => {
         if (!annule) setError(err instanceof ApiError ? err.message : 'Chargement des activités impossible.');
@@ -87,7 +110,12 @@ export function ActivitiesPage() {
     return () => {
       annule = true;
     };
-  }, []);
+  }, [canListUsers]);
+
+  const proprietaireDuProjet = (id: string) => projects.find((p) => p.id === id)?.ownerId;
+  // Projets sur lesquels l'utilisateur peut ajouter des activités.
+  const projetsGeres = projects.filter((p) => permissions.canManageProject(p));
+  const peutCreer = projetsGeres.some((p) => p.status !== 'completed' && p.status !== 'archived');
 
   const filtered = useMemo(() => {
     let result = [...activities];
@@ -133,6 +161,12 @@ export function ActivitiesPage() {
     setActivities((prev) => [creee, ...prev]);
   };
 
+  const handleUpdate = async (data: Partial<Activity>) => {
+    if (!editTarget) return;
+    const modifiee = await activityService.update(editTarget.id, data);
+    setActivities((prev) => prev.map((a) => (a.id === modifiee.id ? modifiee : a)));
+  };
+
   const handleDeleteConfirm = async () => {
     if (!deleteTarget) return;
     setIsDeleting(true);
@@ -153,9 +187,11 @@ export function ActivitiesPage() {
         title="Activités"
         description="Toutes les activités de vos projets."
         actions={
-          <Button leftIcon={<Plus className="h-4 w-4" />} onClick={() => setIsCreateOpen(true)}>
-            Nouvelle activité
-          </Button>
+          peutCreer && (
+            <Button leftIcon={<Plus className="h-4 w-4" />} onClick={() => setIsCreateOpen(true)}>
+              Nouvelle activité
+            </Button>
+          )
         }
       />
 
@@ -184,8 +220,8 @@ export function ActivitiesPage() {
           <EmptyState
             icon={<ClipboardList className="h-6 w-6" />}
             title="Aucune activité trouvée"
-            description="Ajustez vos filtres ou créez une nouvelle activité."
-            action={<Button leftIcon={<Plus className="h-4 w-4" />} onClick={() => setIsCreateOpen(true)}>Créer une activité</Button>}
+            description={peutCreer ? 'Ajustez vos filtres ou créez une nouvelle activité.' : 'Ajustez vos filtres.'}
+            action={peutCreer && <Button leftIcon={<Plus className="h-4 w-4" />} onClick={() => setIsCreateOpen(true)}>Créer une activité</Button>}
           />
         ) : view === 'table' ? (
           <div className="overflow-x-auto rounded-lg border border-border bg-surface">
@@ -202,7 +238,11 @@ export function ActivitiesPage() {
               </TableHead>
               <TableBody>
                 {filtered.map((activity) => (
-                  <TableRow key={activity.id}>
+                  <TableRow
+                    key={activity.id}
+                    className="cursor-pointer"
+                    onClick={() => navigate(`/activities/${activity.id}`)}
+                  >
                     <TableCell><p className="font-medium text-foreground">{activity.title}</p></TableCell>
                     <TableCell className="text-sm text-muted-foreground">{findProjectName(activity.projectId)}</TableCell>
                     <TableCell className="w-48">
@@ -224,13 +264,46 @@ export function ActivitiesPage() {
         ) : (
           <div className="grid gap-4 md:grid-cols-2 lg:grid-cols-3">
             {filtered.map((activity) => (
-              <ActivityCard key={activity.id} activity={activity} projectName={findProjectName(activity.projectId)} onDelete={(a) => setDeleteTarget(a)} />
+              <ActivityCard
+                key={activity.id}
+                activity={activity}
+                projectName={findProjectName(activity.projectId)}
+                onView={(a) => navigate(`/activities/${a.id}`)}
+                onEdit={
+                  permissions.canTrackActivity(activity, proprietaireDuProjet(activity.projectId))
+                    ? (a) => setEditTarget(a)
+                    : undefined
+                }
+                onDelete={
+                  permissions.canManageActivity(proprietaireDuProjet(activity.projectId))
+                    ? (a) => setDeleteTarget(a)
+                    : undefined
+                }
+              />
             ))}
           </div>
         )}
       </div>
 
-      <CreateActivityModal isOpen={isCreateOpen} onClose={() => setIsCreateOpen(false)} onCreate={handleCreate} projects={projects} />
+      <CreateActivityModal
+        isOpen={isCreateOpen}
+        onClose={() => setIsCreateOpen(false)}
+        onCreate={handleCreate}
+        projects={projetsGeres}
+        assignees={users}
+      />
+      {editTarget && (
+        <CreateActivityModal
+          key={editTarget.id}
+          isOpen
+          activity={editTarget}
+          trackOnly={!permissions.canManageActivity(proprietaireDuProjet(editTarget.projectId))}
+          onClose={() => setEditTarget(null)}
+          onCreate={handleUpdate}
+          projects={projects}
+          assignees={users}
+        />
+      )}
       <ConfirmDialog isOpen={!!deleteTarget} onClose={() => setDeleteTarget(null)} onConfirm={handleDeleteConfirm} title="Supprimer l'activité ?" description={`L'activité "${deleteTarget?.title}" sera définitivement supprimée.`} confirmLabel="Supprimer" isLoading={isDeleting} />
     </Container>
   );

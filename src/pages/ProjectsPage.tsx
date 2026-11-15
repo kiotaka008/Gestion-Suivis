@@ -1,5 +1,5 @@
 import { useMemo, useState, useEffect } from 'react';
-import { useNavigate } from 'react-router-dom';
+import { useNavigate, useSearchParams } from 'react-router-dom';
 import { Plus, FolderKanban } from 'lucide-react';
 import { Container } from '../components/ui/Container';
 import { PageHeader } from '../components/ui/PageHeader';
@@ -25,6 +25,7 @@ import type { Project, ProjectStatus, Priority } from '../types/models';
 import { Alert } from '../components/ui/Alert';
 import { projectService } from '../services/projectService';
 import { ApiError } from '../services/ApiError';
+import { usePermissions } from '../hooks/usePermissions';
 
 function getStatusVariant(status: ProjectStatus) {
   switch (status) {
@@ -67,16 +68,27 @@ function getPriorityLabel(priority: Priority) {
 
 export function ProjectsPage() {
   const navigate = useNavigate();
+  const permissions = usePermissions();
+  const [searchParams] = useSearchParams();
   const [projects, setProjects] = useState<Project[]>([]);
   const [isLoading, setIsLoading] = useState(true);
 
-  const [search, setSearch] = useState('');
+  // Recherche transmise par la barre de recherche de l'en-tête (?search=...) : appliquée à
+  // l'ouverture de la page et à chaque nouvelle recherche, même si la page est déjà affichée.
+  const paramRecherche = searchParams.get('search') ?? '';
+  const [search, setSearch] = useState(paramRecherche);
+  const [dernierParam, setDernierParam] = useState(paramRecherche);
+  if (paramRecherche !== dernierParam) {
+    setDernierParam(paramRecherche);
+    setSearch(paramRecherche);
+  }
   const [status, setStatus] = useState('all');
   const [priority, setPriority] = useState('all');
   const [sort, setSort] = useState('recent');
   const [view, setView] = useState<ViewMode>('table');
 
   const [isCreateOpen, setIsCreateOpen] = useState(false);
+  const [editTarget, setEditTarget] = useState<Project | null>(null);
   const [deleteTarget, setDeleteTarget] = useState<Project | null>(null);
   const [isDeleting, setIsDeleting] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -154,6 +166,12 @@ export function ProjectsPage() {
     setProjects((prev) => [cree, ...prev]);
   };
 
+  const handleUpdate = async (data: Partial<Project>) => {
+    if (!editTarget) return;
+    const modifie = await projectService.update(editTarget.id, data);
+    setProjects((prev) => prev.map((p) => (p.id === modifie.id ? modifie : p)));
+  };
+
   const handleDeleteConfirm = async () => {
     if (!deleteTarget) return;
     setIsDeleting(true);
@@ -174,12 +192,14 @@ export function ProjectsPage() {
         title="Projets"
         description="Gérez tous vos projets en un seul endroit."
         actions={
-          <Button
-            leftIcon={<Plus className="h-4 w-4" />}
-            onClick={() => setIsCreateOpen(true)}
-          >
-            Nouveau projet
-          </Button>
+          permissions.canCreateProject && (
+            <Button
+              leftIcon={<Plus className="h-4 w-4" />}
+              onClick={() => setIsCreateOpen(true)}
+            >
+              Nouveau projet
+            </Button>
+          )
         }
       />
 
@@ -213,14 +233,20 @@ export function ProjectsPage() {
           <EmptyState
             icon={<FolderKanban className="h-6 w-6" />}
             title="Aucun projet trouvé"
-            description="Ajustez vos filtres ou créez un nouveau projet."
+            description={
+              permissions.canCreateProject
+                ? 'Ajustez vos filtres ou créez un nouveau projet.'
+                : 'Ajustez vos filtres : seuls les projets auxquels vous participez sont affichés.'
+            }
             action={
-              <Button
-                leftIcon={<Plus className="h-4 w-4" />}
-                onClick={() => setIsCreateOpen(true)}
-              >
-                Créer un projet
-              </Button>
+              permissions.canCreateProject && (
+                <Button
+                  leftIcon={<Plus className="h-4 w-4" />}
+                  onClick={() => setIsCreateOpen(true)}
+                >
+                  Créer un projet
+                </Button>
+              )
             }
           />
         ) : view === 'table' ? (
@@ -309,7 +335,8 @@ export function ProjectsPage() {
                 key={project.id}
                 project={project}
                 onView={(p) => navigate(`/projects/${p.id}`)}
-                onDelete={(p) => setDeleteTarget(p)}
+                onEdit={permissions.canManageProject(project) ? (p) => setEditTarget(p) : undefined}
+                onDelete={permissions.canDeleteProject ? (p) => setDeleteTarget(p) : undefined}
               />
             ))}
           </div>
@@ -321,6 +348,16 @@ export function ProjectsPage() {
         onClose={() => setIsCreateOpen(false)}
         onCreate={handleCreate}
       />
+
+      {editTarget && (
+        <CreateProjectModal
+          key={editTarget.id}
+          isOpen
+          project={editTarget}
+          onClose={() => setEditTarget(null)}
+          onCreate={handleUpdate}
+        />
+      )}
 
       <ConfirmDialog
         isOpen={!!deleteTarget}

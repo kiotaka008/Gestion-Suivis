@@ -1,6 +1,7 @@
 import { NavLink } from 'react-router-dom';
 import { X, FolderKanban } from 'lucide-react';
-import { NAV_ITEMS, SECONDARY_NAV_ITEMS } from '../../constants/routes';
+import { NAV_ITEMS, ROUTES, SECONDARY_NAV_ITEMS } from '../../constants/routes';
+import { usePermissions } from '../../hooks/usePermissions';
 import { cn } from '../../utils/cn';
 
 interface SidebarProps {
@@ -9,6 +10,8 @@ interface SidebarProps {
 }
 
 export function Sidebar({ isOpen, onClose }: SidebarProps) {
+  // La page Utilisateurs est réservée aux administrateurs et responsables.
+  const { canListUsers } = usePermissions();
   const linkClass = ({ isActive }: { isActive: boolean }) =>
     cn(
       'flex items-center gap-3 rounded-md px-3 py-2 text-sm font-medium transition-colors focus:outline-none focus-visible:ring-2 focus-visible:ring-primary',
@@ -55,7 +58,7 @@ export function Sidebar({ isOpen, onClose }: SidebarProps) {
 
         <nav className="flex-1 overflow-y-auto p-4">
           <ul className="space-y-1">
-            {NAV_ITEMS.map((item) => (
+            {NAV_ITEMS.filter((item) => item.path !== ROUTES.USERS || canListUsers).map((item) => (
               <li key={item.path}>
                 <NavLink to={item.path} onClick={onClose} className={linkClass}>
                   <item.icon className="h-5 w-5" />

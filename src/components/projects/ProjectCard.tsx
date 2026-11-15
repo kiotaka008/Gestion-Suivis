@@ -86,22 +86,23 @@ export function ProjectCard({ project, onEdit, onDelete, onView }: ProjectCardPr
                 <MoreVertical className="h-4 w-4" />
               </button>
             }
+            // Seules les actions fournies par la page (donc autorisées) sont proposées.
             items={[
-              {
+              onView && {
                 label: 'Voir',
                 icon: <Eye className="h-4 w-4" />,
-                onClick: () => onView?.(project),
+                onClick: () => onView(project),
               },
-              {
+              onEdit && {
                 label: 'Modifier',
                 icon: <Edit className="h-4 w-4" />,
-                onClick: () => onEdit?.(project),
+                onClick: () => onEdit(project),
               },
-              {
+              onDelete && {
                 label: 'Supprimer',
                 icon: <Trash2 className="h-4 w-4" />,
-                variant: 'danger',
-                onClick: () => onDelete?.(project),
+                variant: 'danger' as const,
+                onClick: () => onDelete(project),
               },
             ]}
           />

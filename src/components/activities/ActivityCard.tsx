@@ -112,21 +112,21 @@ export function ActivityCard({ activity, projectName, onEdit, onDelete, onView }
               </button>
             }
             items={[
-              {
+              onView && {
                 label: 'Voir',
                 icon: <Eye className="h-4 w-4" />,
-                onClick: () => onView?.(activity),
+                onClick: () => onView(activity),
               },
-              {
+              onEdit && {
                 label: 'Modifier',
                 icon: <Edit className="h-4 w-4" />,
-                onClick: () => onEdit?.(activity),
+                onClick: () => onEdit(activity),
               },
-              {
+              onDelete && {
                 label: 'Supprimer',
                 icon: <Trash2 className="h-4 w-4" />,
                 variant: 'danger',
-                onClick: () => onDelete?.(activity),
+                onClick: () => onDelete(activity),
               },
             ]}
           />

@@ -7,8 +7,8 @@ import {
   FileText,
 } from 'lucide-react';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '../ui/Card';
-import { Button } from '../ui/Button';
 import { Badge } from '../ui/Badge';
+import { Alert } from '../ui/Alert';
 
 interface Integration {
   id: string;
@@ -16,57 +16,51 @@ interface Integration {
   description: string;
   icon: React.ComponentType<{ className?: string }>;
   color: string;
-  connected: boolean;
 }
 
+/** Intégrations envisagées : aucune n'est développée (ni côté frontend, ni côté backend). */
 const INTEGRATIONS: Integration[] = [
   {
     id: 'google-calendar',
     name: 'Google Calendar',
-    description: 'Synchronisez vos échéances avec votre agenda.',
+    description: 'Synchroniser les échéances avec un agenda.',
     icon: Calendar,
     color: 'text-blue-500',
-    connected: false,
   },
   {
     id: 'slack',
     name: 'Slack',
-    description: 'Recevez vos notifications dans Slack.',
+    description: 'Recevoir les notifications dans Slack.',
     icon: Hash,
     color: 'text-purple-500',
-    connected: true,
   },
   {
     id: 'github',
     name: 'GitHub',
-    description: 'Liez vos commits et pull requests aux projets.',
+    description: 'Lier des commits et pull requests aux projets.',
     icon: Code2,
     color: 'text-foreground',
-    connected: false,
   },
   {
     id: 'trello',
     name: 'Trello',
-    description: 'Importez vos tableaux Trello.',
+    description: 'Importer des tableaux Trello.',
     icon: LayoutGrid,
     color: 'text-blue-400',
-    connected: false,
   },
   {
     id: 'notion',
     name: 'Notion',
-    description: 'Synchronisez votre documentation.',
+    description: 'Synchroniser la documentation.',
     icon: FileText,
     color: 'text-foreground',
-    connected: false,
   },
   {
     id: 'discord',
     name: 'Discord',
-    description: 'Recevez vos notifications sur Discord.',
+    description: 'Recevoir les notifications sur Discord.',
     icon: MessageSquare,
     color: 'text-indigo-500',
-    connected: false,
   },
 ];
 
@@ -76,16 +70,19 @@ export function IntegrationsSection() {
       <div>
         <h2 className="text-lg font-semibold text-foreground">Intégrations</h2>
         <p className="text-sm text-muted-foreground">
-          Connectez vos outils préférés à ProjectManager.
+          Connexion de l'application à des outils externes.
         </p>
       </div>
 
+      <Alert variant="info">
+        Aucune intégration externe n'est disponible pour le moment. Les services ci-dessous sont envisagés
+        pour une version future.
+      </Alert>
+
       <Card>
         <CardHeader>
-          <CardTitle>Services disponibles</CardTitle>
-          <CardDescription>
-            Activez les intégrations que vous souhaitez utiliser.
-          </CardDescription>
+          <CardTitle>Intégrations envisagées</CardTitle>
+          <CardDescription>Elles ne peuvent pas encore être activées.</CardDescription>
         </CardHeader>
         <CardContent className="space-y-3">
           {INTEGRATIONS.map((integration) => (
@@ -105,12 +102,7 @@ export function IntegrationsSection() {
                 </div>
               </div>
 
-              <div className="flex shrink-0 items-center gap-2">
-                {integration.connected && <Badge variant="success">Connecté</Badge>}
-                <Button variant={integration.connected ? 'outline' : 'primary'} size="sm">
-                  {integration.connected ? 'Déconnecter' : 'Connecter'}
-                </Button>
-              </div>
+              <Badge variant="muted">Non disponible</Badge>
             </div>
           ))}
         </CardContent>

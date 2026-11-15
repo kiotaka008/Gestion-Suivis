@@ -69,26 +69,26 @@ export function UserCard({ user, onEdit, onDelete, onView, onToggleActive }: Use
               </button>
             }
             items={[
-              {
+              onView && {
                 label: 'Voir',
                 icon: <Eye className="h-4 w-4" />,
-                onClick: () => onView?.(user),
+                onClick: () => onView(user),
               },
-              {
+              onEdit && {
                 label: 'Modifier',
                 icon: <Edit className="h-4 w-4" />,
-                onClick: () => onEdit?.(user),
+                onClick: () => onEdit(user),
               },
-              {
+              onToggleActive && {
                 label: user.isActive ? 'Désactiver' : 'Activer',
                 icon: user.isActive ? <UserX className="h-4 w-4" /> : <UserCheck className="h-4 w-4" />,
-                onClick: () => onToggleActive?.(user),
+                onClick: () => onToggleActive(user),
               },
-              {
+              onDelete && {
                 label: 'Supprimer',
                 icon: <Trash2 className="h-4 w-4" />,
                 variant: 'danger',
-                onClick: () => onDelete?.(user),
+                onClick: () => onDelete(user),
               },
             ]}
           />

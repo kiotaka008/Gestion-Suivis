@@ -16,60 +16,58 @@ export interface ModalProps {
 export function Modal({ isOpen, onClose, title, description, children, footer, size = 'md' }: ModalProps) {
   const modalRef = useRef<HTMLDivElement>(null);
 
+  // Dernière version de onClose. Les formulaires passent une fonction recréée à chaque rendu :
+  // si l'effet ci-dessous en dépendait, il se relancerait à chaque frappe au clavier et
+  // replacerait le focus au début de la fenêtre après chaque caractère saisi.
+  const onCloseRef = useRef(onClose);
+  useEffect(() => {
+    onCloseRef.current = onClose;
+  }, [onClose]);
+
   useEffect(() => {
     if (!isOpen) return;
+    const modal = modalRef.current;
+    const SELECTEUR = 'button, [href], input, select, textarea, [tabindex]:not([tabindex="-1"])';
 
     // 1. Fermer avec Échap
     const onKey = (e: KeyboardEvent) => {
-      if (e.key === 'Escape') onClose();
+      if (e.key === 'Escape') onCloseRef.current();
     };
     document.addEventListener('keydown', onKey);
     document.body.style.overflow = 'hidden';
 
-    // 2. Focus Trap (Piéger le focus dans la modale)
-    const focusableElements = modalRef.current?.querySelectorAll(
-      'button, [href], input, select, textarea, [tabindex]:not([tabindex="-1"])'
-    );
-    
-    if (focusableElements && focusableElements.length > 0) {
-      const firstElement = focusableElements[0] as HTMLElement;
-      const lastElement = focusableElements[focusableElements.length - 1] as HTMLElement;
+    // 2. Focus initial, une seule fois à l'ouverture : premier champ de saisie s'il y en a un,
+    //    sinon premier élément focusable (bouton de fermeture).
+    const minuterie = setTimeout(() => {
+      const champ = modal?.querySelector<HTMLElement>('input:not([disabled]), select:not([disabled]), textarea:not([disabled])');
+      (champ ?? modal?.querySelector<HTMLElement>(SELECTEUR))?.focus();
+    }, 50);
 
-      // Mettre le focus sur le premier élément à l'ouverture
-      setTimeout(() => firstElement.focus(), 50);
-
-      const handleTab = (e: KeyboardEvent) => {
-        if (e.key !== 'Tab') return;
-
-        if (e.shiftKey) {
-          // Shift + Tab (reculer)
-          if (document.activeElement === firstElement) {
-            e.preventDefault();
-            lastElement.focus();
-          }
-        } else {
-          // Tab (avancer)
-          if (document.activeElement === lastElement) {
-            e.preventDefault();
-            firstElement.focus();
-          }
-        }
-      };
-
-      const modal = modalRef.current;
-      modal?.addEventListener('keydown', handleTab);
-      return () => {
-        document.removeEventListener('keydown', onKey);
-        document.body.style.overflow = '';
-        modal?.removeEventListener('keydown', handleTab);
-      };
-    }
+    // 3. Piège à focus : Tab et Maj+Tab restent dans la fenêtre (éléments recalculés à chaque fois,
+    //    le contenu pouvant changer pendant que la fenêtre est ouverte).
+    const handleTab = (e: KeyboardEvent) => {
+      if (e.key !== 'Tab' || !modal) return;
+      const elements = Array.from(modal.querySelectorAll<HTMLElement>(SELECTEUR));
+      if (elements.length === 0) return;
+      const premier = elements[0];
+      const dernier = elements[elements.length - 1];
+      if (e.shiftKey && document.activeElement === premier) {
+        e.preventDefault();
+        dernier.focus();
+      } else if (!e.shiftKey && document.activeElement === dernier) {
+        e.preventDefault();
+        premier.focus();
+      }
+    };
+    modal?.addEventListener('keydown', handleTab);
 
     return () => {
+      clearTimeout(minuterie);
       document.removeEventListener('keydown', onKey);
       document.body.style.overflow = '';
+      modal?.removeEventListener('keydown', handleTab);
     };
-  }, [isOpen, onClose]);
+  }, [isOpen]);
 
   if (!isOpen) return null;
 

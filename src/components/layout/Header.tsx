@@ -1,4 +1,5 @@
-import { Menu, Search, Bell, LogOut, User as UserIcon, Settings as SettingsIcon } from 'lucide-react';
+import { Menu, Bell, LogOut, User as UserIcon, Settings as SettingsIcon } from 'lucide-react';
+import { GlobalSearch } from './GlobalSearch';
 import { useEffect, useState } from 'react';
 import { useLocation, useNavigate } from 'react-router-dom';
 import { ThemeToggle } from '../ui/ThemeToggle';
@@ -44,15 +45,7 @@ export function Header({ onMenuClick }: HeaderProps) {
         <Menu className="h-5 w-5" />
       </button>
 
-      <div className="relative hidden max-w-md flex-1 md:block">
-        <Search className="pointer-events-none absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-muted-foreground" />
-        <input
-          type="search"
-          placeholder="Rechercher..."
-          className="h-9 w-full rounded-md border border-border bg-background pl-10 pr-4 text-sm text-foreground placeholder:text-muted-foreground focus:outline-none focus:ring-2 focus:ring-primary"
-          aria-label="Rechercher"
-        />
-      </div>
+      <GlobalSearch />
 
       <div className="ml-auto flex items-center gap-2">
         <ThemeToggle />

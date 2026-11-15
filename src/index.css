@@ -37,6 +37,21 @@
   }
 }
 
+/* Paramètres > Préférences : mode compact (toutes les tailles en rem diminuent). */
+html.compact {
+  font-size: 14px;
+}
+
+/* Paramètres > Préférences : animations désactivées. */
+html.reduce-motion *,
+html.reduce-motion *::before,
+html.reduce-motion *::after {
+  animation-duration: 0.01ms !important;
+  animation-iteration-count: 1 !important;
+  transition-duration: 0.01ms !important;
+  scroll-behavior: auto !important;
+}
+
 .dark {
   --color-background: #0f172a;
   --color-foreground: #f8fafc;

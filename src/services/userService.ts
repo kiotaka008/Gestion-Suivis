@@ -1,5 +1,5 @@
 import api, { lireTout } from './api';
-import type { Role, User } from '../types/models';
+import type { HistoryEvent, Role, User } from '../types/models';
 import type { PaginatedResponse, PaginationParams } from '../types/api';
 
 export interface CreateUserPayload {
@@ -52,5 +52,11 @@ export const userService = {
 
   async remove(id: string): Promise<void> {
     await api.delete(`/users/${id}`);
+  },
+
+  /** Historique paginé, du plus récent au plus ancien. */
+  async history(id: string, page = 1, perPage = 20): Promise<PaginatedResponse<HistoryEvent>> {
+    const { data } = await api.get<PaginatedResponse<HistoryEvent>>(`/users/${id}/history`, { params: { page, perPage } });
+    return data;
   },
 };

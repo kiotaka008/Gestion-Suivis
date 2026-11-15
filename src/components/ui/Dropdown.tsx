@@ -10,11 +10,13 @@ export interface DropdownItem {
 
 export interface DropdownProps {
   trigger: ReactNode;
-  items: DropdownItem[];
+  /** Les entrées vides (false, null, undefined) sont ignorées : pratique pour les actions conditionnelles. */
+  items: (DropdownItem | false | null | undefined)[];
   align?: 'left' | 'right';
 }
 
-export function Dropdown({ trigger, items, align = 'right' }: DropdownProps) {
+export function Dropdown({ trigger, items: entrees, align = 'right' }: DropdownProps) {
+  const items = entrees.filter((item): item is DropdownItem => !!item);
   const [open, setOpen] = useState(false);
   const ref = useRef<HTMLDivElement>(null);
   const menuRef = useRef<HTMLDivElement>(null);
@@ -66,6 +68,9 @@ export function Dropdown({ trigger, items, align = 'right' }: DropdownProps) {
       document.removeEventListener('keydown', onKeyDown);
     };
   }, [open]);
+
+  // Aucune action disponible : pas de bouton de menu.
+  if (items.length === 0) return null;
 
   return (
     <div ref={ref} className="relative inline-block">

@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react';
+import { useCallback, useEffect, useMemo, useState } from 'react';
 import { useParams, useNavigate, Link } from 'react-router-dom';
 import {
   ArrowLeft,
@@ -12,6 +12,11 @@ import {
   ClipboardList,
   LayoutDashboard,
   AlertTriangle,
+  Archive,
+  ArchiveRestore,
+  Plus,
+  UserMinus,
+  UserPlus,
 } from 'lucide-react';
 import { Container } from '../components/ui/Container';
 import { Button } from '../components/ui/Button';
@@ -22,7 +27,14 @@ import { Tabs, type Tab } from '../components/ui/Tabs';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '../components/ui/Card';
 import { EmptyState } from '../components/ui/EmptyState';
 import { ConfirmDialog } from '../components/ui/ConfirmDialog';
-import type { Activity, ActivityStatus, Priority, ProjectStatus, Role } from '../types/models';
+import type { Activity, ActivityStatus, Priority, ProjectStatus, Role, User } from '../types/models';
+import { Select } from '../components/ui/Select';
+import { CreateProjectModal } from '../components/projects/CreateProjectModal';
+import { CreateActivityModal } from '../components/activities/CreateActivityModal';
+import { activityService } from '../services/activityService';
+import { userService } from '../services/userService';
+import { usePermissions } from '../hooks/usePermissions';
+import { HistoryTimeline } from '../components/history/HistoryTimeline';
 import { Alert } from '../components/ui/Alert';
 import { Spinner } from '../components/ui/Spinner';
 import { projectService } from '../services/projectService';
@@ -148,6 +160,92 @@ export function ProjectDetailPage() {
   const [isLoading, setIsLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
 
+  const permissions = usePermissions();
+  const [users, setUsers] = useState<User[]>([]);
+  const [isEditOpen, setIsEditOpen] = useState(false);
+  const [isActivityOpen, setIsActivityOpen] = useState(false);
+  const [nouveauMembre, setNouveauMembre] = useState('');
+  const [enCours, setEnCours] = useState(false);
+
+  // Utilisateurs de l'organisation (choix du chef de projet, des membres et des responsables),
+  // visibles seulement par les administrateurs et responsables.
+  const { canListUsers } = permissions;
+  useEffect(() => {
+    if (!canListUsers) return;
+    let annule = false;
+    userService
+      .listAll()
+      .then((liste) => {
+        if (!annule) setUsers(liste);
+      })
+      .catch(() => {
+        /* Sans la liste, les choix de membres et de responsables sont simplement masqués. */
+      });
+    return () => {
+      annule = true;
+    };
+  }, [canListUsers]);
+
+  // Historique du projet et de ses activités (source stable pour HistoryTimeline).
+  const chargerHistorique = useCallback(
+    (page: number, perPage: number) => projectService.history(id ?? '', page, perPage),
+    [id]
+  );
+
+  const peutGerer = permissions.canManageProject(project);
+  const estClos = project?.status === 'completed' || project?.status === 'archived';
+  const candidatsMembres = useMemo(
+    () =>
+      users.filter(
+        (u) => u.isActive && u.id !== project?.ownerId && !(project?.memberIds ?? []).includes(u.id)
+      ),
+    [users, project]
+  );
+
+  // Les erreurs des formulaires remontent jusqu'à eux et affichent le message du backend.
+  const handleUpdate = async (data: Partial<Project>) => {
+    if (!project) return;
+    setProject(await projectService.update(project.id, data));
+  };
+
+  const executer = async (action: () => Promise<Project>, messageEchec: string) => {
+    setError(null);
+    setEnCours(true);
+    try {
+      setProject(await action());
+      return true;
+    } catch (err) {
+      setError(err instanceof ApiError ? err.message : messageEchec);
+      return false;
+    } finally {
+      setEnCours(false);
+    }
+  };
+
+  const changerStatut = (statut: ProjectStatus) => {
+    if (!project) return;
+    void executer(() => projectService.update(project.id, { status: statut }), 'Modification impossible.');
+  };
+
+  const ajouterMembre = async () => {
+    if (!project || !nouveauMembre) return;
+    const ok = await executer(() => projectService.addMember(project.id, nouveauMembre), 'Ajout du membre impossible.');
+    if (ok) setNouveauMembre('');
+  };
+
+  const retirerMembre = (userId: string) => {
+    if (!project) return;
+    void executer(() => projectService.removeMember(project.id, userId), 'Retrait du membre impossible.');
+  };
+
+  const handleCreateActivity = async (data: Partial<Activity>) => {
+    if (!project) return;
+    const creee = await activityService.create({ ...data, projectId: project.id });
+    setActivities((prev) => [creee, ...prev]);
+    // La progression du projet est recalculée par le backend.
+    setProject(await projectService.getById(project.id));
+  };
+
   // Projet et activités visibles, chargés depuis le backend (404/403 → « introuvable »).
   useEffect(() => {
     if (!id) return;
@@ -246,17 +344,41 @@ export function ProjectDetailPage() {
           )}
         </div>
 
-        <div className="flex items-center gap-2">
-          <Button variant="outline" leftIcon={<Edit className="h-4 w-4" />}>
-            Modifier
-          </Button>
-          <Button
-            variant="danger"
-            leftIcon={<Trash2 className="h-4 w-4" />}
-            onClick={() => setDeleteOpen(true)}
-          >
-            Supprimer
-          </Button>
+        <div className="flex flex-wrap items-center gap-2">
+          {peutGerer && (
+            <Button variant="outline" leftIcon={<Edit className="h-4 w-4" />} onClick={() => setIsEditOpen(true)}>
+              Modifier
+            </Button>
+          )}
+          {peutGerer &&
+            (project.status === 'archived' ? (
+              <Button
+                variant="outline"
+                leftIcon={<ArchiveRestore className="h-4 w-4" />}
+                isLoading={enCours}
+                onClick={() => changerStatut('active')}
+              >
+                Réactiver
+              </Button>
+            ) : (
+              <Button
+                variant="outline"
+                leftIcon={<Archive className="h-4 w-4" />}
+                isLoading={enCours}
+                onClick={() => changerStatut('archived')}
+              >
+                Archiver
+              </Button>
+            ))}
+          {permissions.canDeleteProject && (
+            <Button
+              variant="danger"
+              leftIcon={<Trash2 className="h-4 w-4" />}
+              onClick={() => setDeleteOpen(true)}
+            >
+              Supprimer
+            </Button>
+          )}
         </div>
       </div>
 
@@ -382,12 +504,13 @@ export function ProjectDetailPage() {
                       Membres ({project.memberIds.length})
                     </p>
                     <div className="mt-2 space-y-2">
-                      {project.memberIds.map((memberId) => (
-                        <div key={memberId} className="flex items-center gap-2">
-                          <Avatar name={`Membre ${memberId.slice(-1)}`} size="sm" />
-                          <span className="text-sm text-foreground">
-                            Membre {memberId.slice(-1)}
-                          </span>
+                      {(project.members ?? []).length === 0 && (
+                        <p className="text-sm text-muted-foreground">Aucun membre.</p>
+                      )}
+                      {(project.members ?? []).map((membre) => (
+                        <div key={membre.id} className="flex items-center gap-2">
+                          <Avatar name={membre.name} src={membre.avatarUrl} size="sm" />
+                          <span className="text-sm text-foreground">{membre.name}</span>
                         </div>
                       ))}
                     </div>
@@ -406,6 +529,13 @@ export function ProjectDetailPage() {
                 Activités ({activities.length})
               </CardTitle>
               <CardDescription>Toutes les activités liées à ce projet.</CardDescription>
+              {peutGerer && !estClos && (
+                <div className="pt-2">
+                  <Button size="sm" leftIcon={<Plus className="h-4 w-4" />} onClick={() => setIsActivityOpen(true)}>
+                    Nouvelle activité
+                  </Button>
+                </div>
+              )}
             </CardHeader>
             <CardContent>
               {activities.length === 0 ? (
@@ -417,9 +547,10 @@ export function ProjectDetailPage() {
               ) : (
                 <div className="space-y-2">
                   {activities.map((activity) => (
-                    <div
+                    <Link
                       key={activity.id}
-                      className="flex items-center justify-between gap-3 rounded-lg border border-border p-3"
+                      to={`/activities/${activity.id}`}
+                      className="flex items-center justify-between gap-3 rounded-lg border border-border p-3 transition-colors hover:bg-muted"
                     >
                       <div className="min-w-0 flex-1">
                         <p className="truncate text-sm font-medium text-foreground">
@@ -432,7 +563,7 @@ export function ProjectDetailPage() {
                       <Badge variant={getActivityStatusVariant(activity.status)}>
                         {getActivityStatusLabel(activity.status)}
                       </Badge>
-                    </div>
+                    </Link>
                   ))}
                 </div>
               )}
@@ -450,6 +581,33 @@ export function ProjectDetailPage() {
               <CardDescription>Personnes ayant accès à ce projet.</CardDescription>
             </CardHeader>
             <CardContent className="space-y-3">
+              {peutGerer && canListUsers && (
+                <div className="flex flex-col gap-2 rounded-lg border border-dashed border-border p-3 sm:flex-row sm:items-end">
+                  <Select
+                    label="Ajouter un membre"
+                    name="nouveauMembre"
+                    wrapperClassName="flex-1"
+                    value={nouveauMembre}
+                    onChange={(e) => setNouveauMembre(e.target.value)}
+                    disabled={candidatsMembres.length === 0}
+                    options={[
+                      {
+                        value: '',
+                        label: candidatsMembres.length === 0 ? 'Aucun utilisateur à ajouter' : 'Choisir un utilisateur…',
+                      },
+                      ...candidatsMembres.map((u) => ({ value: u.id, label: `${u.name} (${u.email})` })),
+                    ]}
+                  />
+                  <Button
+                    leftIcon={<UserPlus className="h-4 w-4" />}
+                    onClick={ajouterMembre}
+                    disabled={!nouveauMembre}
+                    isLoading={enCours}
+                  >
+                    Ajouter
+                  </Button>
+                </div>
+              )}
               {project.owner && (
                 <div className="flex items-center justify-between rounded-lg border border-border p-3">
                   <div className="flex items-center gap-3">
@@ -476,7 +634,21 @@ export function ProjectDetailPage() {
                         <p className="text-xs text-muted-foreground">{membre.email}</p>
                       </div>
                     </div>
-                    <Badge variant="muted">Membre</Badge>
+                    <div className="flex items-center gap-2">
+                      <Badge variant="muted">Membre</Badge>
+                      {peutGerer && (
+                        <Button
+                          size="sm"
+                          variant="ghost"
+                          leftIcon={<UserMinus className="h-4 w-4" />}
+                          onClick={() => retirerMembre(membre.id)}
+                          disabled={enCours}
+                          aria-label={`Retirer ${membre.name} du projet`}
+                        >
+                          Retirer
+                        </Button>
+                      )}
+                    </div>
                   </div>
                 ))}
             </CardContent>
@@ -492,13 +664,43 @@ export function ProjectDetailPage() {
         )}
 
         {activeTab === 'history' && (
-          <EmptyState
-            icon={<History className="h-6 w-6" />}
-            title="Historique vide"
-            description="L'historique des modifications s'affichera ici."
-          />
+          <Card>
+            <CardHeader>
+              <CardTitle className="flex items-center gap-2">
+                <History className="h-5 w-5" />
+                Historique
+              </CardTitle>
+              <CardDescription>Actions sur le projet et ses activités, de la plus récente à la plus ancienne.</CardDescription>
+            </CardHeader>
+            <CardContent>
+              <HistoryTimeline load={chargerHistorique} />
+            </CardContent>
+          </Card>
         )}
       </div>
+
+      {isEditOpen && (
+        <CreateProjectModal
+          key={project.id}
+          isOpen
+          project={project}
+          // Seul un administrateur peut changer le chef de projet (règle du backend).
+          owners={permissions.isAdmin ? users : undefined}
+          onClose={() => setIsEditOpen(false)}
+          onCreate={handleUpdate}
+        />
+      )}
+
+      {isActivityOpen && (
+        <CreateActivityModal
+          isOpen
+          projects={[project]}
+          defaultProjectId={project.id}
+          assignees={users}
+          onClose={() => setIsActivityOpen(false)}
+          onCreate={handleCreateActivity}
+        />
+      )}
 
       <ConfirmDialog
         isOpen={deleteOpen}

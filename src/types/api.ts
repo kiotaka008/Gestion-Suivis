@@ -18,6 +18,8 @@ export interface PaginationParams {
   perPage?: number;
   sortBy?: string;
   sortOrder?: 'asc' | 'desc';
+  /** Recherche plein texte (nom, titre, description) côté backend. */
+  search?: string;
 }
 
 export type ApiErrorCode =

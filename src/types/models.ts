@@ -111,3 +111,19 @@ export interface Report {
   priorityDistribution: Distribution;
   projectsSummary: { id: string; name: string; progress: number; status: ProjectStatus }[];
 }
+
+/** Action de l'historique (GET /api/{projects|activities|users}/{id}/history). */
+export interface HistoryEvent {
+  id: string;
+  /** Code technique : project.updated, activity.created, user.login... */
+  action: string;
+  entityType: 'project' | 'activity' | 'user' | string;
+  entityId: string;
+  /** Phrase lisible en français, construite par le backend. */
+  description: string;
+  /** Auteur (nom seulement) ; null pour une action automatique. */
+  author: { id: string; name: string } | null;
+  fields: string[];
+  status: string | null;
+  createdAt: string;
+}

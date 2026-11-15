@@ -14,6 +14,7 @@ const DashboardPage = lazy(() => import('./pages/DashboardPage').then(m => ({ de
 const ProjectsPage = lazy(() => import('./pages/ProjectsPage').then(m => ({ default: m.ProjectsPage })));
 const ProjectDetailPage = lazy(() => import('./pages/ProjectDetailPage').then(m => ({ default: m.ProjectDetailPage })));
 const ActivitiesPage = lazy(() => import('./pages/ActivitiesPage').then(m => ({ default: m.ActivitiesPage })));
+const ActivityDetailPage = lazy(() => import('./pages/ActivityDetailPage').then(m => ({ default: m.ActivityDetailPage })));
 const UsersPage = lazy(() => import('./pages/UsersPage').then(m => ({ default: m.UsersPage })));
 const ReportsPage = lazy(() => import('./pages/ReportsPage').then(m => ({ default: m.ReportsPage })));
 const NotificationsPage = lazy(() => import('./pages/NotificationsPage').then(m => ({ default: m.NotificationsPage })));
@@ -44,6 +45,7 @@ function App() {
                   <Route path={ROUTES.PROJECTS} element={<ProjectsPage />} />
                   <Route path={`${ROUTES.PROJECTS}/:id`} element={<ProjectDetailPage />} />
                   <Route path={ROUTES.ACTIVITIES} element={<ActivitiesPage />} />
+                  <Route path={`${ROUTES.ACTIVITIES}/:id`} element={<ActivityDetailPage />} />
                   <Route path={ROUTES.USERS} element={<UsersPage />} />
                   <Route path={ROUTES.REPORTS} element={<ReportsPage />} />
                   <Route path={ROUTES.NOTIFICATIONS} element={<NotificationsPage />} />
