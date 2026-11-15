@@ -60,9 +60,11 @@ api.interceptors.response.use(
     }
 
     // Les messages du backend sont rédigés pour l'utilisateur (aucun détail technique) :
-    // on les affiche, sauf pour les erreurs serveur.
+    // on les affiche, sauf pour les erreurs serveur. Exception : 503, dont le backend ne renvoie
+    // que des messages fixes (ressource verrouillée, assistant IA indisponible) ; un 503 sans corps
+    // JSON (proxy, serveur arrêté) garde le message générique.
     const erreur = ApiError.fromStatus(status);
-    if (messageServeur && status < 500) {
+    if (messageServeur && (status < 500 || status === 503)) {
       return Promise.reject(new ApiError(messageServeur, status, erreur.code, { raw: data }));
     }
     return Promise.reject(erreur);
