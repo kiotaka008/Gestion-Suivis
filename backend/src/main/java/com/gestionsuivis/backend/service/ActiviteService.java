@@ -89,9 +89,7 @@ public class ActiviteService {
         if (!controle.peutGererProjet(u, projet)) {
             throw new AccesInterditException("Vous n'avez pas les droits nécessaires pour ajouter une activité à ce projet.");
         }
-        if (projet.getStatut().estClos()) {
-            throw new ConflitMetierException("Impossible d'ajouter une activité à un projet terminé ou archivé.");
-        }
+        verifierProjetOuvert(projet);
         ProjetService.verifierDates(requete.startDate(), requete.dueDate());
 
         Activite activite = new Activite();
@@ -131,6 +129,8 @@ public class ActiviteService {
                         + "de vos activités.");
             }
         }
+        // Après les droits (403), avant toute écriture : rien n'est modifié sur un projet clos (409).
+        verifierProjetOuvert(activite.getProjet());
         ProjetService.verifierDates(requete.startDate() != null ? requete.startDate() : activite.getDateDebut(),
                 requete.dueDate() != null ? requete.dueDate() : activite.getDateEcheance());
 
@@ -198,6 +198,7 @@ public class ActiviteService {
         Activite activite = charger(id);
         controle.verifierGererActivite(u, activite);
         Projet projet = activite.getProjet();
+        verifierProjetOuvert(projet);
         String titre = activite.getTitre();
         activites.delete(activite);
         activites.flush();
@@ -208,6 +209,16 @@ public class ActiviteService {
     }
 
     // ---------------------------------------------------------------- utilitaires
+
+    /**
+     * Un projet terminé ou archivé est en lecture seule pour ses activités : ni création,
+     * ni modification, ni suppression (409). Il faut d'abord le rouvrir.
+     */
+    private static void verifierProjetOuvert(Projet projet) {
+        if (projet.getStatut().estClos()) {
+            throw new ConflitMetierException("Impossible d'ajouter une activité à un projet terminé ou archivé.");
+        }
+    }
 
     private Activite charger(UUID id) {
         return activites.findById(id).orElseThrow(() -> new RessourceIntrouvableException("Activité", id));

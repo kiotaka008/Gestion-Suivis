@@ -25,12 +25,19 @@ import com.gestionsuivis.backend.security.UtilisateurCourant;
 import com.gestionsuivis.backend.support.Donnees;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
+import org.junit.jupiter.params.ParameterizedTest;
+import org.junit.jupiter.params.provider.Arguments;
+import org.junit.jupiter.params.provider.EnumSource;
+import org.junit.jupiter.params.provider.MethodSource;
 
 import java.time.Clock;
 import java.time.Instant;
 import java.time.LocalDate;
 import java.time.ZoneOffset;
+import java.util.Arrays;
+import java.util.List;
 import java.util.Optional;
+import java.util.stream.Stream;
 
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
@@ -39,6 +46,7 @@ import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.verify;
+import static org.mockito.Mockito.verifyNoInteractions;
 import static org.mockito.Mockito.when;
 
 /** Règles métier des activités (affectation, statuts, permissions EMPLOYE, avancement), avec Mockito. */
@@ -224,5 +232,186 @@ class ActiviteServiceTest {
         verify(audit).journaliser(eq(manager.getId()), eq("activity_created"), eq(AuditService.PROJET),
                 eq(projet.getId()), eq(java.util.Map.of(AuditService.CLE_ACTIVITE, reponse.id(),
                         AuditService.CLE_TITRE_ACTIVITE, "Rapport")));
+    }
+
+    // ---------------------------------------------------------------- projet clos : activités en lecture seule (AUD-012)
+
+    private static final String MESSAGE_PROJET_CLOS = "Impossible d'ajouter une activité à un projet terminé ou archivé.";
+
+    /** Projet clos dont l'avancement (40 %) différerait d'un recalcul (aucune activité simulée : 0 %). */
+    private void clore(StatutProjet statut) {
+        projet.setStatut(statut);
+        projet.setAvancement(40);
+        activite.setAvancement(40);
+        when(utilisateurs.findById(autre.getId())).thenReturn(Optional.of(autre));
+    }
+
+    /** État observable de l'activité et du projet, pour vérifier qu'un refus ne change rien. */
+    private List<Object> etat() {
+        return Arrays.asList(activite.getTitre(), activite.getDescription(), activite.getPriorite(),
+                activite.getStatut(), activite.getAvancement(), activite.getDateDebut(), activite.getDateEcheance(),
+                activite.getResponsable(), projet.getAvancement(), List.copyOf(projet.utilisateursMembres()));
+    }
+
+    /** Refus sans effet : ni écriture, ni suppression, ni recalcul, ni historique, ni notification. */
+    private void verifierAucunEffet() {
+        verify(activites, never()).saveAndFlush(any());
+        verify(activites, never()).delete(any(Activite.class));
+        verify(activites, never()).flush();
+        verify(activites, never()).avancementMoyen(any());
+        verify(utilisateurs, never()).findById(any());
+        verifyNoInteractions(audit, notifications);
+    }
+
+    /** Requête PATCH qui ne modifie que le champ indiqué. */
+    private ModifierActiviteRequest requeteSur(String champ) {
+        return switch (champ) {
+            case "title" -> new ModifierActiviteRequest("Nouveau titre", null, null, null, null, null, null, null);
+            case "description" -> new ModifierActiviteRequest(null, "Nouvelle description", null, null, null, null,
+                    null, null);
+            case "status" -> new ModifierActiviteRequest(null, null, StatutActivite.TERMINE, null, null, null, null,
+                    null);
+            case "priority" -> new ModifierActiviteRequest(null, null, null, Priorite.HAUTE, null, null, null, null);
+            case "assigneeId" -> new ModifierActiviteRequest(null, null, null, null, autre.getId(), null, null, null);
+            case "startDate" -> new ModifierActiviteRequest(null, null, null, null, null, LocalDate.of(2025, 10, 16),
+                    null, null);
+            case "dueDate" -> new ModifierActiviteRequest(null, null, null, null, null, null,
+                    LocalDate.of(2025, 10, 30), null);
+            case "progress" -> new ModifierActiviteRequest(null, null, null, null, null, null, null, 80);
+            default -> throw new IllegalArgumentException(champ);
+        };
+    }
+
+    static Stream<Arguments> projetsClosEtChamps() {
+        return Stream.of(StatutProjet.TERMINE, StatutProjet.ARCHIVE).flatMap(statut -> Stream.of(
+                "title", "description", "priority", "startDate", "dueDate", "status", "progress", "assigneeId")
+                .map(champ -> Arguments.of(statut, champ)));
+    }
+
+    // A et B : chaque champ, sur un projet terminé puis archivé, par le chef de projet.
+    @ParameterizedTest(name = "{0} : {1}")
+    @MethodSource("projetsClosEtChamps")
+    void projetClos_modificationDUnChampParLeChef_409SansEffet(StatutProjet statut, String champ) {
+        clore(statut);
+        when(courant.obtenir()).thenReturn(Donnees.connecte(manager));
+        List<Object> avant = etat();
+
+        assertThatThrownBy(() -> service.modifier(activite.getId(), requeteSur(champ)))
+                .isInstanceOf(ConflitMetierException.class)
+                .hasMessage(MESSAGE_PROJET_CLOS);
+
+        assertThat(etat()).isEqualTo(avant);
+        verifierAucunEffet();
+    }
+
+    @ParameterizedTest(name = "{0}")
+    @EnumSource(value = StatutProjet.class, names = {"TERMINE", "ARCHIVE"})
+    void projetClos_suppressionParLeChef_409SansEffet(StatutProjet statut) {
+        clore(statut);
+        when(courant.obtenir()).thenReturn(Donnees.connecte(manager));
+        List<Object> avant = etat();
+
+        assertThatThrownBy(() -> service.supprimer(activite.getId()))
+                .isInstanceOf(ConflitMetierException.class)
+                .hasMessage(MESSAGE_PROJET_CLOS);
+
+        assertThat(etat()).isEqualTo(avant);
+        verifierAucunEffet();
+    }
+
+    // C : le changement de responsable n'ajoute aucun membre et ne notifie personne.
+    @ParameterizedTest(name = "{0}")
+    @EnumSource(value = StatutProjet.class, names = {"TERMINE", "ARCHIVE"})
+    void projetClos_changementDeResponsable_409SansMembreAjouteNiNotification(StatutProjet statut) {
+        clore(statut);
+        when(courant.obtenir()).thenReturn(Donnees.connecte(manager));
+
+        assertThatThrownBy(() -> service.modifier(activite.getId(), requeteSur("assigneeId")))
+                .isInstanceOf(ConflitMetierException.class);
+
+        assertThat(activite.getResponsable()).isEqualTo(employe);
+        assertThat(projet.utilisateursMembres()).doesNotContain(autre);
+        assertThat(projet.membre(autre.getId())).isEmpty();
+        verifyNoInteractions(notifications);
+    }
+
+    // D : la personne affectée ne peut plus changer ni le statut ni l'avancement.
+    @ParameterizedTest(name = "{0}")
+    @EnumSource(value = StatutProjet.class, names = {"TERMINE", "ARCHIVE"})
+    void projetClos_personneAffectee_statutEtAvancementRefuses409(StatutProjet statut) {
+        clore(statut);
+        when(courant.obtenir()).thenReturn(Donnees.connecte(employe));
+        List<Object> avant = etat();
+
+        assertThatThrownBy(() -> service.modifier(activite.getId(), requeteSur("status")))
+                .isInstanceOf(ConflitMetierException.class)
+                .hasMessage(MESSAGE_PROJET_CLOS);
+        assertThatThrownBy(() -> service.modifier(activite.getId(), requeteSur("progress")))
+                .isInstanceOf(ConflitMetierException.class)
+                .hasMessage(MESSAGE_PROJET_CLOS);
+
+        assertThat(etat()).isEqualTo(avant);
+        verifierAucunEffet();
+    }
+
+    // E : les droits sont vérifiés avant le statut du projet (403 avant 409).
+    @ParameterizedTest(name = "{0}")
+    @EnumSource(value = StatutProjet.class, names = {"TERMINE", "ARCHIVE"})
+    void projetClos_sansDroit403_avecDroit409(StatutProjet statut) {
+        clore(statut);
+        List<Object> avant = etat();
+
+        when(courant.obtenir()).thenReturn(Donnees.connecte(autre));
+        assertThatThrownBy(() -> service.modifier(activite.getId(), requeteSur("status")))
+                .isInstanceOf(AccesInterditException.class);
+        assertThatThrownBy(() -> service.supprimer(activite.getId()))
+                .isInstanceOf(AccesInterditException.class);
+        // La personne affectée n'a pas le droit de supprimer : 403, pas 409.
+        when(courant.obtenir()).thenReturn(Donnees.connecte(employe));
+        assertThatThrownBy(() -> service.supprimer(activite.getId()))
+                .isInstanceOf(AccesInterditException.class);
+
+        when(courant.obtenir()).thenReturn(Donnees.connecte(manager));
+        assertThatThrownBy(() -> service.modifier(activite.getId(), requeteSur("status")))
+                .isInstanceOf(ConflitMetierException.class);
+        assertThatThrownBy(() -> service.supprimer(activite.getId()))
+                .isInstanceOf(ConflitMetierException.class);
+
+        assertThat(etat()).isEqualTo(avant);
+        verifierAucunEffet();
+    }
+
+    // F : un projet en cours ou en attente n'est pas clos.
+    @ParameterizedTest(name = "{0}")
+    @EnumSource(value = StatutProjet.class, names = {"EN_COURS", "EN_ATTENTE"})
+    void projetOuvert_modificationEtSuppressionRestentPossibles(StatutProjet statut) {
+        projet.setStatut(statut);
+
+        when(courant.obtenir()).thenReturn(Donnees.connecte(employe));
+        assertThat(service.modifier(activite.getId(), requeteSur("progress")).progress()).isEqualTo(80);
+
+        when(courant.obtenir()).thenReturn(Donnees.connecte(manager));
+        assertThat(service.modifier(activite.getId(), requeteSur("title")).title()).isEqualTo("Nouveau titre");
+        verify(audit).journaliser(eq(manager.getId()), eq("updated"), eq(AuditService.ACTIVITE),
+                eq(activite.getId()), any());
+
+        service.supprimer(activite.getId());
+        verify(activites).delete(activite);
+        verify(audit).journaliser(manager.getId(), "deleted", AuditService.ACTIVITE, activite.getId());
+    }
+
+    // G : la création reste refusée, aussi pour un projet terminé (le cas archivé est couvert plus haut).
+    @Test
+    void creation_refuseeSurUnProjetTermine_409SansEffet() {
+        clore(StatutProjet.TERMINE);
+        when(courant.obtenir()).thenReturn(Donnees.connecte(manager));
+
+        assertThatThrownBy(() -> service.creer(new CreerActiviteRequest("X", null, projet.getId(), null, null,
+                autre.getId(), null, null, null)))
+                .isInstanceOf(ConflitMetierException.class)
+                .hasMessage(MESSAGE_PROJET_CLOS);
+
+        assertThat(projet.membre(autre.getId())).isEmpty();
+        verifierAucunEffet();
     }
 }
