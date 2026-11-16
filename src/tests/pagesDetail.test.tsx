@@ -224,3 +224,172 @@ describe('ActivitiesPage', () => {
     expect(screen.getByTestId('emplacement')).toHaveTextContent('/activities/a1');
   });
 });
+
+// Projet terminé ou archivé : activités en lecture seule (AUD-012, le backend refuse avec 409).
+describe('Projet clôturé : activités en lecture seule', () => {
+  const lActivite = activite('a1', 'Saisie des dépenses', 'p1', {
+    projectName: 'Budget 2026', assigneeId: 'alice', assignee: alice, progress: 40, status: 'in_progress',
+  });
+  const projetAvecStatut = (status: 'active' | 'on_hold' | 'completed' | 'archived') => ({ ...leProjet, status });
+  const rendreActivite = () => rendre(<ActivityDetailPage />, { route: '/activities/a1', chemin: '/activities/:id' });
+  const ACTIONS = ['Modifier', 'Supprimer', "Mettre à jour l'avancement"];
+
+  beforeEach(() => {
+    vi.mocked(activityService.getById).mockResolvedValue(lActivite);
+    vi.mocked(activityService.history).mockResolvedValue(page([]));
+  });
+
+  describe('ActivityDetailPage', () => {
+    it.each(['completed', 'archived'] as const)(
+      'projet %s, chef du projet : aucune action, lecture seule annoncée avec la réactivation',
+      async (status) => {
+        connecter('manager', 'moi');
+        vi.mocked(projectService.getById).mockResolvedValue(projetAvecStatut(status));
+        rendreActivite();
+
+        expect(await screen.findByText(/ses activités sont en\s+lecture seule/)).toBeInTheDocument();
+        expect(screen.getByText(/Réactivez le projet pour les modifier/)).toBeInTheDocument();
+        for (const action of ACTIONS) {
+          expect(screen.queryByRole('button', { name: action })).not.toBeInTheDocument();
+        }
+        // Le reste de la page reste affiché.
+        expect(screen.getByRole('heading', { name: 'Saisie des dépenses' })).toBeInTheDocument();
+        expect(screen.getByText('40%')).toBeInTheDocument();
+      }
+    );
+
+    it.each(['completed', 'archived'] as const)(
+      "projet %s, personne affectée : pas de « Mettre à jour l'avancement », pas d'invitation à réactiver",
+      async (status) => {
+        connecter('member', 'alice');
+        vi.mocked(projectService.getById).mockResolvedValue(projetAvecStatut(status));
+        rendreActivite();
+
+        expect(await screen.findByText(/ses activités sont en\s+lecture seule/)).toBeInTheDocument();
+        expect(screen.queryByText(/Réactivez le projet/)).not.toBeInTheDocument();
+        for (const action of ACTIONS) {
+          expect(screen.queryByRole('button', { name: action })).not.toBeInTheDocument();
+        }
+      }
+    );
+
+    it.each(['active', 'on_hold'] as const)('projet %s : actions habituelles selon les droits', async (status) => {
+      vi.mocked(projectService.getById).mockResolvedValue(projetAvecStatut(status));
+
+      connecter('manager', 'moi');
+      const premier = rendreActivite();
+      expect(await screen.findByRole('button', { name: 'Modifier' })).toBeInTheDocument();
+      expect(screen.getByRole('button', { name: 'Supprimer' })).toBeInTheDocument();
+      expect(screen.queryByText(/lecture seule/)).not.toBeInTheDocument();
+      premier.unmount();
+
+      connecter('member', 'alice');
+      rendreActivite();
+      expect(await screen.findByRole('button', { name: "Mettre à jour l'avancement" })).toBeInTheDocument();
+      expect(screen.queryByRole('button', { name: 'Supprimer' })).not.toBeInTheDocument();
+    });
+
+    it.each(['active', 'completed'] as const)(
+      'projet %s, utilisateur sans droit : aucune action ne devient accessible',
+      async (status) => {
+        connecter('member', 'bob');
+        vi.mocked(projectService.getById).mockResolvedValue(projetAvecStatut(status));
+        rendreActivite();
+
+        expect(await screen.findByRole('heading', { name: 'Saisie des dépenses' })).toBeInTheDocument();
+        for (const action of ACTIONS) {
+          expect(screen.queryByRole('button', { name: action })).not.toBeInTheDocument();
+        }
+      }
+    );
+  });
+
+  describe('ActivitiesPage (vue cartes)', () => {
+    const menuDeLaCarte = async () => {
+      const user = userEvent.setup();
+      rendre(<ActivitiesPage />);
+      expect(await screen.findByText('Saisie des dépenses')).toBeInTheDocument();
+      await user.click(screen.getByLabelText('Vue cartes'));
+      await user.click(screen.getByLabelText("Actions de l'activité"));
+      return screen.getAllByRole('menuitem').map((b) => b.textContent);
+    };
+
+    beforeEach(() => {
+      vi.mocked(activityService.listAll).mockResolvedValue([lActivite]);
+    });
+
+    it.each(['completed', 'archived'] as const)(
+      'projet %s : chef du projet et administrateur ne voient que « Voir »',
+      async (status) => {
+        vi.mocked(projectService.listAll).mockResolvedValue([projetAvecStatut(status)]);
+
+        connecter('manager', 'moi');
+        expect(await menuDeLaCarte()).toEqual(['Voir']);
+        // Seul projet géré clôturé : pas de création non plus.
+        expect(screen.queryByRole('button', { name: 'Nouvelle activité' })).not.toBeInTheDocument();
+      }
+    );
+
+    it.each(['completed', 'archived'] as const)('projet %s : administrateur, « Voir » seulement', async (status) => {
+      vi.mocked(projectService.listAll).mockResolvedValue([projetAvecStatut(status)]);
+      connecter('admin', 'admin1');
+      expect(await menuDeLaCarte()).toEqual(['Voir']);
+    });
+
+    it.each(['completed', 'archived'] as const)('projet %s : personne affectée, « Voir » seulement', async (status) => {
+      vi.mocked(projectService.listAll).mockResolvedValue([projetAvecStatut(status)]);
+      connecter('member', 'alice');
+      expect(await menuDeLaCarte()).toEqual(['Voir']);
+    });
+
+    it.each(['active', 'on_hold'] as const)('projet %s : menu habituel selon les droits', async (status) => {
+      vi.mocked(projectService.listAll).mockResolvedValue([projetAvecStatut(status)]);
+      connecter('manager', 'moi');
+      expect(await menuDeLaCarte()).toEqual(['Voir', 'Modifier', 'Supprimer']);
+      expect(screen.getByRole('button', { name: 'Nouvelle activité' })).toBeInTheDocument();
+    });
+  });
+
+  describe('ProjectDetailPage', () => {
+    it('projet archivé : lecture seule annoncée ; après réactivation, la création redevient possible', async () => {
+      connecter('manager', 'moi');
+      vi.mocked(projectService.getById).mockResolvedValue(projetAvecStatut('archived'));
+      vi.mocked(projectService.update).mockResolvedValue(projetAvecStatut('active'));
+      const user = userEvent.setup();
+      rendreProjet();
+
+      await user.click(await screen.findByRole('button', { name: 'Activités' }));
+      expect(screen.getByText(/les activités sont en\s+lecture seule/)).toBeInTheDocument();
+      expect(screen.queryByRole('button', { name: 'Nouvelle activité' })).not.toBeInTheDocument();
+
+      await user.click(screen.getByRole('button', { name: 'Réactiver' }));
+
+      expect(projectService.update).toHaveBeenCalledWith('p1', { status: 'active' });
+      expect(await screen.findByRole('button', { name: 'Nouvelle activité' })).toBeInTheDocument();
+      expect(screen.queryByText(/lecture seule/)).not.toBeInTheDocument();
+      expect(screen.getByRole('button', { name: 'Archiver' })).toBeInTheDocument();
+    });
+
+    it('projet terminé, membre sans droit : lecture seule annoncée, sans invitation à réactiver', async () => {
+      connecter('member', 'alice');
+      vi.mocked(projectService.getById).mockResolvedValue(projetAvecStatut('completed'));
+      const user = userEvent.setup();
+      rendreProjet();
+
+      await user.click(await screen.findByRole('button', { name: 'Activités' }));
+      expect(screen.getByText(/les activités sont en\s+lecture seule/)).toBeInTheDocument();
+      expect(screen.queryByText(/Réactivez le projet/)).not.toBeInTheDocument();
+      expect(screen.queryByRole('button', { name: 'Réactiver' })).not.toBeInTheDocument();
+    });
+
+    it('projet actif : pas de mention de lecture seule, création disponible pour le chef', async () => {
+      connecter('manager', 'moi');
+      const user = userEvent.setup();
+      rendreProjet();
+
+      await user.click(await screen.findByRole('button', { name: 'Activités' }));
+      expect(screen.getByRole('button', { name: 'Nouvelle activité' })).toBeInTheDocument();
+      expect(screen.queryByText(/lecture seule/)).not.toBeInTheDocument();
+    });
+  });
+});

@@ -155,8 +155,10 @@ export function ActivityDetailPage() {
     );
   }
 
-  const peutGerer = permissions.canManageActivity(project?.ownerId);
-  const peutSuivre = permissions.canTrackActivity(activity, project?.ownerId);
+  // Projet terminé ou archivé : ses activités sont en lecture seule (le backend refuse avec 409).
+  const projetClos = project?.status === 'completed' || project?.status === 'archived';
+  const peutGerer = !projetClos && permissions.canManageActivity(project?.ownerId);
+  const peutSuivre = !projetClos && permissions.canTrackActivity(activity, project?.ownerId);
   const statut = STATUTS[activity.status];
   const priorite = PRIORITES[activity.priority];
 
@@ -228,6 +230,14 @@ export function ActivityDetailPage() {
           )}
         </div>
       </div>
+
+      {projetClos && (
+        <Alert variant="info" className="mt-4">
+          {project?.status === 'archived' ? 'Ce projet est archivé' : 'Ce projet est terminé'} : ses activités sont en
+          lecture seule.
+          {permissions.canManageProject(project) && ' Réactivez le projet pour les modifier.'}
+        </Alert>
+      )}
 
       <div className="mt-6 grid gap-6 lg:grid-cols-3">
         <Card className="lg:col-span-2">
@@ -327,7 +337,7 @@ export function ActivityDetailPage() {
         </CardContent>
       </Card>
 
-      {isEditOpen && (
+      {isEditOpen && peutSuivre && (
         <CreateActivityModal
           key={activity.id}
           isOpen
@@ -341,7 +351,7 @@ export function ActivityDetailPage() {
       )}
 
       <ConfirmDialog
-        isOpen={deleteOpen}
+        isOpen={deleteOpen && peutGerer}
         onClose={() => setDeleteOpen(false)}
         onConfirm={handleDelete}
         title="Supprimer l'activité ?"

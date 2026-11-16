@@ -113,9 +113,12 @@ export function ActivitiesPage() {
   }, [canListUsers]);
 
   const proprietaireDuProjet = (id: string) => projects.find((p) => p.id === id)?.ownerId;
+  // Projet terminé ou archivé : ses activités sont en lecture seule (le backend refuse avec 409).
+  const estClos = (p: Pick<Project, 'status'> | undefined) => p?.status === 'completed' || p?.status === 'archived';
+  const activiteModifiable = (a: Activity) => !estClos(projects.find((p) => p.id === a.projectId));
   // Projets sur lesquels l'utilisateur peut ajouter des activités.
   const projetsGeres = projects.filter((p) => permissions.canManageProject(p));
-  const peutCreer = projetsGeres.some((p) => p.status !== 'completed' && p.status !== 'archived');
+  const peutCreer = projetsGeres.some((p) => !estClos(p));
 
   const filtered = useMemo(() => {
     let result = [...activities];
@@ -270,11 +273,13 @@ export function ActivitiesPage() {
                 projectName={findProjectName(activity.projectId)}
                 onView={(a) => navigate(`/activities/${a.id}`)}
                 onEdit={
+                  activiteModifiable(activity) &&
                   permissions.canTrackActivity(activity, proprietaireDuProjet(activity.projectId))
                     ? (a) => setEditTarget(a)
                     : undefined
                 }
                 onDelete={
+                  activiteModifiable(activity) &&
                   permissions.canManageActivity(proprietaireDuProjet(activity.projectId))
                     ? (a) => setDeleteTarget(a)
                     : undefined

@@ -529,6 +529,12 @@ export function ProjectDetailPage() {
                 Activités ({activities.length})
               </CardTitle>
               <CardDescription>Toutes les activités liées à ce projet.</CardDescription>
+              {estClos && (
+                <Alert variant="info" className="mt-2">
+                  {project.status === 'archived' ? 'Projet archivé' : 'Projet terminé'} : les activités sont en lecture
+                  seule.{peutGerer && ' Réactivez le projet pour les modifier.'}
+                </Alert>
+              )}
               {peutGerer && !estClos && (
                 <div className="pt-2">
                   <Button size="sm" leftIcon={<Plus className="h-4 w-4" />} onClick={() => setIsActivityOpen(true)}>
