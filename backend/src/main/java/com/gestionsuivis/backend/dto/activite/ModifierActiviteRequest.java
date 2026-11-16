@@ -5,6 +5,7 @@ import com.gestionsuivis.backend.entity.Priorite;
 import com.gestionsuivis.backend.entity.StatutActivite;
 import jakarta.validation.constraints.Max;
 import jakarta.validation.constraints.Min;
+import jakarta.validation.constraints.Pattern;
 import jakarta.validation.constraints.Size;
 
 import java.time.LocalDate;
@@ -19,7 +20,10 @@ import java.util.UUID;
  */
 @JsonIgnoreProperties(ignoreUnknown = true)
 public record ModifierActiviteRequest(
-        @Size(min = 1, max = 255, message = "Le titre doit contenir entre 1 et 255 caractères.")
+        // Absent ou null : non modifié. Fourni : au moins un caractère autre qu'un espace
+        // (même règle que trim() du service et que la contrainte BTRIM(title) <> '' de la base).
+        @Pattern(regexp = "(?s).*[^\\x00-\\x20].*", message = "Le titre de l'activité ne peut pas être vide.")
+        @Size(max = 255, message = "Le titre ne doit pas dépasser 255 caractères.")
         String title,
 
         @Size(max = 5000, message = "La description ne doit pas dépasser 5000 caractères.")

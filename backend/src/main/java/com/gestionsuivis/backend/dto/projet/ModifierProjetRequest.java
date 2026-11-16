@@ -3,6 +3,7 @@ package com.gestionsuivis.backend.dto.projet;
 import com.fasterxml.jackson.annotation.JsonIgnoreProperties;
 import com.gestionsuivis.backend.entity.Priorite;
 import com.gestionsuivis.backend.entity.StatutProjet;
+import jakarta.validation.constraints.Pattern;
 import jakarta.validation.constraints.Size;
 
 import java.time.LocalDate;
@@ -16,7 +17,10 @@ import java.util.UUID;
  */
 @JsonIgnoreProperties(ignoreUnknown = true)
 public record ModifierProjetRequest(
-        @Size(min = 1, max = 255, message = "Le nom doit contenir entre 1 et 255 caractères.")
+        // Absent ou null : non modifié. Fourni : au moins un caractère autre qu'un espace
+        // (même règle que trim() du service et que la contrainte BTRIM(name) <> '' de la base).
+        @Pattern(regexp = "(?s).*[^\\x00-\\x20].*", message = "Le nom du projet ne peut pas être vide.")
+        @Size(max = 255, message = "Le nom ne doit pas dépasser 255 caractères.")
         String name,
 
         @Size(max = 5000, message = "La description ne doit pas dépasser 5000 caractères.")

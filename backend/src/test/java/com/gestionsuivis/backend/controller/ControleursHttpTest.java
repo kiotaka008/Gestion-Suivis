@@ -22,6 +22,9 @@ import com.gestionsuivis.backend.support.Donnees;
 import jakarta.servlet.http.Cookie;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
+import org.junit.jupiter.params.ParameterizedTest;
+import org.junit.jupiter.params.provider.Arguments;
+import org.junit.jupiter.params.provider.MethodSource;
 import org.mockito.ArgumentCaptor;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.boot.webmvc.test.autoconfigure.WebMvcTest;
@@ -40,6 +43,8 @@ import java.time.Instant;
 import java.util.List;
 import java.util.Optional;
 import java.util.UUID;
+import java.util.function.Consumer;
+import java.util.stream.Stream;
 
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.mockito.ArgumentMatchers.any;
@@ -298,5 +303,123 @@ class ControleursHttpTest {
                 .andExpect(jsonPath("$.code").value("CONFLICT"))
                 .andExpect(jsonPath("$.message").value(
                         "Cette ressource a été modifiée par quelqu'un d'autre. Rechargez-la avant de réessayer."));
+    }
+
+    // ---------------------------------------------------------------- noms vides à la modification (AUD-005)
+
+    /** Une route PATCH dont le corps porte un nom : champ JSON, message attendu, vérification de l'appel. */
+    record CasModification(String libelle, String url, String champ, String messageVide,
+                           Consumer<ControleursHttpTest> verifierAppel) {
+        @Override
+        public String toString() {
+            return libelle;
+        }
+    }
+
+    private static final UUID CIBLE = UUID.fromString("00000000-0000-0000-0000-0000000000a5");
+
+    static Stream<CasModification> modificationsAvecNom() {
+        return Stream.of(
+                new CasModification("projet", "/api/projects/" + CIBLE, "name",
+                        "Le nom du projet ne peut pas être vide.",
+                        t -> verify(t.projetService).modifier(eq(CIBLE), any())),
+                new CasModification("activité", "/api/activities/" + CIBLE, "title",
+                        "Le titre de l'activité ne peut pas être vide.",
+                        t -> verify(t.activiteService).modifier(eq(CIBLE), any())),
+                new CasModification("profil", "/api/users/me", "name",
+                        "Le nom ne peut pas être vide.",
+                        t -> verify(t.utilisateurService).modifierProfil(any())),
+                new CasModification("utilisateur", "/api/users/" + CIBLE, "name",
+                        "Le nom ne peut pas être vide.",
+                        t -> verify(t.utilisateurService).modifier(eq(CIBLE), any())));
+    }
+
+    /** Valeurs JSON acceptées : le service retire ensuite les espaces autour. */
+    static Stream<Arguments> nomsValides() {
+        return modificationsAvecNom().flatMap(cas -> Stream.of(
+                "\"Nouveau nom\"", "\"  Nom entouré d'espaces  \"", "\"É\"", "\"" + "a".repeat(255) + "\"")
+                .map(valeur -> Arguments.of(cas, valeur)));
+    }
+
+    /**
+     * Valeurs JSON refusées : vide, espaces seuls, autres blancs, caractère de contrôle. Toutes
+     * deviendraient une chaîne vide après {@code trim()} et violeraient la contrainte de la base
+     * ({@code BTRIM(...) <> ''}), d'où l'ancienne erreur 500.
+     */
+    static Stream<Arguments> nomsVidesOuBlancs() {
+        return modificationsAvecNom().flatMap(cas -> Stream.of(
+                "\"\"", "\"   \"", "\"\\t \\n \\r\"", "\"\\u0001 \\u001f\"")
+                .map(valeur -> Arguments.of(cas, valeur)));
+    }
+
+    private org.springframework.test.web.servlet.ResultActions modifier(CasModification cas, String corps)
+            throws Exception {
+        Cookie[] cookies = sessionEtCsrf();
+        return mockMvc.perform(patch(cas.url()).cookie(cookies)
+                .header("X-XSRF-TOKEN", cookies[1].getValue())
+                .contentType(MediaType.APPLICATION_JSON).content(corps));
+    }
+
+    private void verifierAucuneModification() {
+        verify(projetService, never()).modifier(any(), any());
+        verify(activiteService, never()).modifier(any(), any());
+        verify(utilisateurService, never()).modifier(any(), any());
+        verify(utilisateurService, never()).modifierProfil(any());
+    }
+
+    @ParameterizedTest(name = "{0} : {1}")
+    @MethodSource("nomsValides")
+    void modification_nomValide_200_etTransmiseAuService(CasModification cas, String valeur) throws Exception {
+        modifier(cas, "{\"" + cas.champ() + "\":" + valeur + "}")
+                .andExpect(status().isOk());
+        cas.verifierAppel().accept(this);
+    }
+
+    @ParameterizedTest(name = "{0} : {1}")
+    @MethodSource("nomsVidesOuBlancs")
+    void modification_nomVideOuBlanc_422SurLeChamp_etServiceNonAppele(CasModification cas, String valeur)
+            throws Exception {
+        modifier(cas, "{\"" + cas.champ() + "\":" + valeur + "}")
+                .andExpect(status().isUnprocessableContent())
+                .andExpect(jsonPath("$.code").value("VALIDATION_ERROR"))
+                .andExpect(jsonPath("$.errors.length()").value(1))
+                .andExpect(jsonPath("$.errors[0].field").value(cas.champ()))
+                .andExpect(jsonPath("$.errors[0].message").value(cas.messageVide()));
+        verifierAucuneModification();
+    }
+
+    @ParameterizedTest(name = "{0}")
+    @MethodSource("modificationsAvecNom")
+    void modification_nomBlanc_formatErreurCommun(CasModification cas) throws Exception {
+        modifier(cas, "{\"" + cas.champ() + "\":\"   \"}")
+                .andExpect(status().isUnprocessableContent())
+                .andExpect(jsonPath("$.timestamp").isNotEmpty())
+                .andExpect(jsonPath("$.status").value(422))
+                .andExpect(jsonPath("$.code").value("VALIDATION_ERROR"))
+                .andExpect(jsonPath("$.message").value("Les données envoyées sont invalides."))
+                .andExpect(jsonPath("$.path").value(cas.url()))
+                .andExpect(jsonPath("$.errors[0].field").value(cas.champ()));
+    }
+
+    @ParameterizedTest(name = "{0}")
+    @MethodSource("modificationsAvecNom")
+    void modification_nomTropLong_422(CasModification cas) throws Exception {
+        String attendu = cas.champ().equals("title")
+                ? "Le titre ne doit pas dépasser 255 caractères."
+                : "Le nom ne doit pas dépasser 255 caractères.";
+        modifier(cas, "{\"" + cas.champ() + "\":\"" + "a".repeat(256) + "\"}")
+                .andExpect(status().isUnprocessableContent())
+                .andExpect(jsonPath("$.errors.length()").value(1))
+                .andExpect(jsonPath("$.errors[0].field").value(cas.champ()))
+                .andExpect(jsonPath("$.errors[0].message").value(attendu));
+        verifierAucuneModification();
+    }
+
+    /** Modification partielle : un nom absent ou null signifie « inchangé » et reste accepté. */
+    @ParameterizedTest(name = "{0}")
+    @MethodSource("modificationsAvecNom")
+    void modification_nomAbsentOuNull_200(CasModification cas) throws Exception {
+        modifier(cas, "{}").andExpect(status().isOk());
+        modifier(cas, "{\"" + cas.champ() + "\":null}").andExpect(status().isOk());
     }
 }

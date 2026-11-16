@@ -3,6 +3,7 @@ package com.gestionsuivis.backend.dto.utilisateur;
 import com.fasterxml.jackson.annotation.JsonIgnoreProperties;
 import com.gestionsuivis.backend.entity.Role;
 import jakarta.validation.constraints.Email;
+import jakarta.validation.constraints.Pattern;
 import jakarta.validation.constraints.Size;
 
 /**
@@ -12,7 +13,10 @@ import jakarta.validation.constraints.Size;
  */
 @JsonIgnoreProperties(ignoreUnknown = true)
 public record ModifierUtilisateurRequest(
-        @Size(min = 1, max = 255, message = "Le nom doit contenir entre 1 et 255 caractères.")
+        // Absent ou null : non modifié. Fourni : au moins un caractère autre qu'un espace
+        // (même règle que trim() du service et que la contrainte BTRIM(name) <> '' de la base).
+        @Pattern(regexp = "(?s).*[^\\x00-\\x20].*", message = "Le nom ne peut pas être vide.")
+        @Size(max = 255, message = "Le nom ne doit pas dépasser 255 caractères.")
         String name,
 
         @Email(message = "L'email n'est pas valide.")
