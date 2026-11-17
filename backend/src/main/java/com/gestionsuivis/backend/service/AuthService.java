@@ -12,6 +12,7 @@ import com.gestionsuivis.backend.entity.Utilisateur;
 import com.gestionsuivis.backend.exception.AccesInterditException;
 import com.gestionsuivis.backend.exception.ConflitMetierException;
 import com.gestionsuivis.backend.exception.IdentifiantsInvalidesException;
+import com.gestionsuivis.backend.exception.MessagesErreur;
 import com.gestionsuivis.backend.exception.RequeteInvalideException;
 import com.gestionsuivis.backend.exception.RessourceIntrouvableException;
 import com.gestionsuivis.backend.mapper.UtilisateurMapper;
@@ -47,6 +48,10 @@ import java.util.UUID;
 @Service
 @RequiredArgsConstructor
 public class AuthService {
+
+    /** Refus d'une connexion Google : aucun compte actif pour l'email (message existant). */
+    static final String AUCUN_COMPTE_GOOGLE_ACTIF = "Aucun compte actif n'est associé à cet email Google. "
+            + "Contactez un administrateur.";
 
     private final UtilisateurRepository utilisateurs;
     private final OrganisationRepository organisations;
@@ -96,7 +101,7 @@ public class AuthService {
             throw new RequeteInvalideException("organization",
                     "Ce compte existe dans plusieurs organisations : précisez l'organisation.");
         }
-        return finaliserConnexion(valides.getFirst(), "login");
+        return finaliserConnexion(valides.getFirst(), "login", MessagesErreur.IDENTIFIANTS_INVALIDES);
     }
 
     /**
@@ -123,12 +128,11 @@ public class AuthService {
                     "Ce compte existe dans plusieurs organisations : précisez l'organisation.");
         }
         if (actifs.size() == 1) {
-            return finaliserConnexion(actifs.getFirst(), "login.google");
+            return finaliserConnexion(actifs.getFirst(), "login.google", AUCUN_COMPTE_GOOGLE_ACTIF);
         }
         if (!comptes.isEmpty() || !securite.inscriptionOuverte() || candidates.size() != 1) {
             log.info("Connexion Google refusée : aucun compte actif pour cet email");
-            throw new IdentifiantsInvalidesException("Aucun compte actif n'est associé à cet email Google. "
-                    + "Contactez un administrateur.");
+            throw new IdentifiantsInvalidesException(AUCUN_COMPTE_GOOGLE_ACTIF);
         }
         Utilisateur cree = executeur.ecrire(candidates.getFirst(), () -> {
             Utilisateur nouveau = new Utilisateur();
@@ -143,15 +147,27 @@ public class AuthService {
             return utilisateurs.saveAndFlush(nouveau);
         });
         log.info("Compte {} créé à la première connexion Google", cree.getId());
-        return finaliserConnexion(cree, "login.google");
+        return finaliserConnexion(cree, "login.google", AUCUN_COMPTE_GOOGLE_ACTIF);
     }
 
-    /** Met à jour la date de dernière connexion, journalise et émet le JWT. */
-    private ResultatConnexion finaliserConnexion(Utilisateur compte, String action) {
+    /**
+     * Met à jour la date de dernière connexion, journalise et émet le JWT.
+     * <p>
+     * La date est écrite par une mise à jour ciblée de {@code last_login_at}, jamais en
+     * modifiant l'entité : une écriture complète de la ligne pourrait annuler une
+     * désactivation, un changement de rôle ou de mot de passe validé pendant la connexion.
+     * Un compte désactivé entre-temps (0 ligne mise à jour) est refusé avec {@code messageRefus},
+     * le message habituel d'un compte désactivé pour ce mode de connexion.
+     */
+    private ResultatConnexion finaliserConnexion(Utilisateur compte, String action, String messageRefus) {
         Utilisateur utilisateur = executeur.ecrire(compte.getOrganisationId(), () -> {
+            if (utilisateurs.enregistrerConnexion(compte.getId(), horloge.instant()) == 0) {
+                log.info("Connexion refusée : compte désactivé ou supprimé pendant la connexion");
+                throw new IdentifiantsInvalidesException(messageRefus);
+            }
+            // Relu après la mise à jour (contexte de persistance vidé) : données à jour.
             Utilisateur connecte = utilisateurs.findById(compte.getId())
                     .orElseThrow(IdentifiantsInvalidesException::new);
-            connecte.setDerniereConnexion(horloge.instant());
             audit.journaliser(connecte.getId(), action, AuditService.UTILISATEUR, connecte.getId());
             return connecte;
         });

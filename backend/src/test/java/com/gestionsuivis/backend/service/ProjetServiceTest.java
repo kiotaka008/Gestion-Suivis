@@ -12,6 +12,7 @@ import com.gestionsuivis.backend.entity.Utilisateur;
 import com.gestionsuivis.backend.exception.AccesInterditException;
 import com.gestionsuivis.backend.exception.ConflitMetierException;
 import com.gestionsuivis.backend.exception.RequeteInvalideException;
+import com.gestionsuivis.backend.exception.RessourceIntrouvableException;
 import com.gestionsuivis.backend.mapper.ProjetMapper;
 import com.gestionsuivis.backend.mapper.UtilisateurMapper;
 import com.gestionsuivis.backend.repository.ActiviteRepository;
@@ -32,6 +33,7 @@ import java.util.UUID;
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import static org.mockito.ArgumentMatchers.any;
+import static org.mockito.Mockito.inOrder;
 import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.verify;
@@ -161,6 +163,39 @@ class ProjetServiceTest {
         when(courant.obtenir()).thenReturn(Donnees.connecte(manager));
 
         assertThatThrownBy(() -> service.supprimer(projet.getId())).isInstanceOf(AccesInterditException.class);
+        verify(projets, never()).verrouiller(any());
+    }
+
+    // ---------------------------------------------------------------- verrou du projet (AUD-002, S3)
+
+    @Test
+    void suppression_verrouilleLeProjetAvantDeSupprimerSesActivites() {
+        // Même ordre que ActiviteService (projet, puis activités) : pas d'interblocage possible.
+        Projet projet = Donnees.projet("Budget", manager);
+        when(projets.verrouiller(projet.getId())).thenReturn(Optional.of(projet));
+        when(activites.findByProjetId(projet.getId())).thenReturn(List.of());
+        when(courant.obtenir()).thenReturn(Donnees.connecte(admin));
+
+        service.supprimer(projet.getId());
+
+        var ordre = inOrder(projets, activites);
+        ordre.verify(projets).verrouiller(projet.getId());
+        ordre.verify(activites).findByProjetId(projet.getId());
+        ordre.verify(activites).deleteAll(any());
+        ordre.verify(projets).delete(projet);
+        verify(projets, never()).findById(any());
+    }
+
+    @Test
+    void suppression_projetInexistant_404_sansSuppressionDActivites() {
+        UUID inconnu = UUID.randomUUID();
+        when(projets.verrouiller(inconnu)).thenReturn(Optional.empty());
+        when(courant.obtenir()).thenReturn(Donnees.connecte(admin));
+
+        assertThatThrownBy(() -> service.supprimer(inconnu)).isInstanceOf(RessourceIntrouvableException.class);
+        verify(activites, never()).findByProjetId(any());
+        verify(activites, never()).deleteAll(any());
+        verify(projets, never()).delete(any(Projet.class));
     }
 
     private static CreerProjetRequest requete(UUID chefId, List<UUID> membres) {

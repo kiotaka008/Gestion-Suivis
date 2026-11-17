@@ -43,7 +43,12 @@ import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.anyString;
+import static org.mockito.ArgumentMatchers.eq;
+import static org.mockito.Mockito.inOrder;
 import static org.mockito.Mockito.mock;
+import static org.mockito.Mockito.never;
+import static org.mockito.Mockito.spy;
+import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 
 /**
@@ -64,6 +69,7 @@ class AuthServiceTest {
     private final PasswordEncoder encodeur = new BCryptPasswordEncoder(4);
     private final List<Utilisateur> base = new ArrayList<>();
     private final JwtDecoder decodeurGoogle = mock(JwtDecoder.class);
+    private final AuditService audit = mock(AuditService.class);
     private Utilisateur utilisateur;
 
     private AuthService service(boolean inscriptionOuverte) {
@@ -71,7 +77,7 @@ class AuthServiceTest {
                 .withProperty(SecuriteProperties.VAR_INSCRIPTION, String.valueOf(inscriptionOuverte)));
         return new AuthService(utilisateurs, organisations,
                 new ExecuteurOrganisation(mock(PlatformTransactionManager.class)), encodeur, jwt,
-                new UtilisateurMapper(), courant, securite, mock(AuditService.class),
+                new UtilisateurMapper(), courant, securite, audit,
                 Clock.fixed(MAINTENANT, ZoneOffset.UTC), new VerificateurGoogle("client-test", decodeurGoogle));
     }
 
@@ -88,6 +94,15 @@ class AuthServiceTest {
                 .findFirst());
         when(utilisateurs.findById(any())).thenAnswer(invocation -> base.stream()
                 .filter(u -> u.getId().equals(invocation.getArgument(0))).findFirst());
+        // Comme la requête ciblée en base : seul last_login_at change, et seulement si le compte est actif.
+        when(utilisateurs.enregistrerConnexion(any(), any())).thenAnswer(invocation -> base.stream()
+                .filter(u -> u.getId().equals(invocation.getArgument(0)) && u.isActif())
+                .findFirst()
+                .map(u -> {
+                    u.setDerniereConnexion(invocation.getArgument(1));
+                    return 1;
+                })
+                .orElse(0));
         when(jwt.generer(any())).thenReturn("jeton-signe");
     }
 
@@ -238,6 +253,100 @@ class AuthServiceTest {
 
         assertThatThrownBy(() -> sansGoogle.connecterAvecGoogle(new ConnexionGoogleRequest("x", null)))
                 .isInstanceOf(AccesInterditException.class);
+    }
+
+    // ---------------------------------------------------------------- dernière connexion (AUD-002, S4)
+    // Mockito vérifie l'enchaînement et l'absence d'écriture de l'entité ; la concurrence réelle
+    // (désactivation validée pendant la connexion) ne se démontre que sur PostgreSQL.
+
+    @Test
+    void connexion_miseAJourCiblee_puisRelecture_puisJournal_puisJeton() {
+        AuthService.ResultatConnexion resultat = service(false)
+                .connecter(new ConnexionRequest("rickael@company.com", MOT_DE_PASSE));
+
+        var ordre = inOrder(utilisateurs, audit, jwt);
+        ordre.verify(utilisateurs).enregistrerConnexion(utilisateur.getId(), MAINTENANT);
+        ordre.verify(utilisateurs).findById(utilisateur.getId());
+        ordre.verify(audit).journaliser(utilisateur.getId(), "login", AuditService.UTILISATEUR, utilisateur.getId());
+        ordre.verify(jwt).generer(utilisateur);
+        assertThat(resultat.utilisateur().lastLoginAt()).isEqualTo(MAINTENANT);
+        assertThat(resultat.jeton()).isEqualTo("jeton-signe");
+    }
+
+    @Test
+    void connexion_neModifiePasLEntite_niDateNiStatutNiRoleNiMotDePasse() {
+        // Compte relu après la mise à jour : aucune de ses propriétés ne doit être modifiée en mémoire,
+        // sinon Hibernate réécrirait toute la ligne users à la fin de la transaction.
+        Utilisateur relu = spy(utilisateur);
+        when(utilisateurs.findById(utilisateur.getId())).thenReturn(Optional.of(relu));
+
+        AuthService.ResultatConnexion resultat = service(false)
+                .connecter(new ConnexionRequest("rickael@company.com", MOT_DE_PASSE));
+
+        verify(relu, never()).setDerniereConnexion(any());
+        verify(relu, never()).setActif(org.mockito.ArgumentMatchers.anyBoolean());
+        verify(relu, never()).setRole(any());
+        verify(relu, never()).setMotDePasseHash(any());
+        verify(relu, never()).setEmail(any());
+        verify(utilisateurs, never()).save(any());
+        verify(utilisateurs, never()).saveAndFlush(any());
+        // Le jeton est émis pour le compte relu en base.
+        verify(jwt).generer(relu);
+        assertThat(resultat.utilisateur().role()).isEqualTo(Role.ADMIN);
+    }
+
+    @Test
+    void compteDesactivePendantLaConnexion_refuseAvecLeMessageHabituel_sansJetonNiJournal() {
+        // Désactivation validée entre la vérification du mot de passe et la mise à jour : 0 ligne.
+        when(utilisateurs.enregistrerConnexion(any(), any())).thenAnswer(invocation -> {
+            utilisateur.setActif(false);
+            return 0;
+        });
+
+        assertThatThrownBy(() -> service(false).connecter(new ConnexionRequest("rickael@company.com", MOT_DE_PASSE)))
+                .isInstanceOf(IdentifiantsInvalidesException.class).hasMessage("Email ou mot de passe incorrect.");
+
+        verify(utilisateurs).enregistrerConnexion(utilisateur.getId(), MAINTENANT);
+        verify(utilisateurs, never()).findById(any());
+        verify(jwt, never()).generer(any());
+        org.mockito.Mockito.verifyNoInteractions(audit);
+        assertThat(utilisateur.getDerniereConnexion()).isNull();
+        assertThat(utilisateur.isActif()).isFalse();
+    }
+
+    @Test
+    void google_compteDesactivePendantLaConnexion_refuseAvecLeMessageGoogleHabituel() {
+        when(decodeurGoogle.decode("jeton-google")).thenReturn(jwtGoogle("rickael@company.com", true));
+        when(utilisateurs.enregistrerConnexion(any(), any())).thenReturn(0);
+
+        assertThatThrownBy(() -> service(false).connecterAvecGoogle(new ConnexionGoogleRequest("jeton-google", null)))
+                .isInstanceOf(IdentifiantsInvalidesException.class)
+                .hasMessage("Aucun compte actif n'est associé à cet email Google. Contactez un administrateur.");
+
+        verify(jwt, never()).generer(any());
+        org.mockito.Mockito.verifyNoInteractions(audit);
+    }
+
+    @Test
+    void compteDejaDesactive_refuseAvantToute_miseAJour() {
+        utilisateur.setActif(false);
+
+        assertThatThrownBy(() -> service(false).connecter(new ConnexionRequest("rickael@company.com", MOT_DE_PASSE)))
+                .isInstanceOf(IdentifiantsInvalidesException.class).hasMessage("Email ou mot de passe incorrect.");
+
+        verify(utilisateurs, never()).enregistrerConnexion(any(), any());
+        verify(jwt, never()).generer(any());
+    }
+
+    @Test
+    void google_connexionReussie_journalLoginGoogle() {
+        when(decodeurGoogle.decode("jeton-google")).thenReturn(jwtGoogle("rickael@company.com", true));
+
+        service(false).connecterAvecGoogle(new ConnexionGoogleRequest("jeton-google", null));
+
+        verify(utilisateurs).enregistrerConnexion(eq(utilisateur.getId()), eq(MAINTENANT));
+        verify(audit).journaliser(utilisateur.getId(), "login.google", AuditService.UTILISATEUR, utilisateur.getId());
+        assertThat(utilisateur.getDerniereConnexion()).isEqualTo(MAINTENANT);
     }
 
     private static Jwt jwtGoogle(String email, boolean verifie) {

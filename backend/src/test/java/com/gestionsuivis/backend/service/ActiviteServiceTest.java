@@ -43,6 +43,7 @@ import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.eq;
+import static org.mockito.Mockito.inOrder;
 import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.verify;
@@ -76,6 +77,9 @@ class ActiviteServiceTest {
         activite = Donnees.activite("Saisie", projet, employe, StatutActivite.EN_COURS, LocalDate.of(2025, 10, 20));
         when(activites.findById(activite.getId())).thenReturn(Optional.of(activite));
         when(projets.findById(projet.getId())).thenReturn(Optional.of(projet));
+        // S3 : verrou du projet, puis statut relu en base (ici : l'état courant de l'objet projet).
+        when(projets.verrouiller(projet.getId())).thenReturn(Optional.of(projet));
+        when(projets.statutActuel(projet.getId())).thenAnswer(invocation -> Optional.of(projet.getStatut()));
         // Comme la base : un identifiant est attribué à l'enregistrement.
         when(activites.saveAndFlush(any())).thenAnswer(invocation -> {
             Activite a = invocation.getArgument(0);
@@ -413,5 +417,142 @@ class ActiviteServiceTest {
 
         assertThat(projet.membre(autre.getId())).isEmpty();
         verifierAucunEffet();
+    }
+
+    // ---------------------------------------------------------------- verrou du projet et recalcul (AUD-002, S3)
+    // Mockito vérifie l'ordre des appels et les décisions. L'attente réelle entre deux transactions,
+    // le verrou SQL généré et l'UPDATE limité aux colonnes modifiées ne se vérifient que sur PostgreSQL.
+
+    @Test
+    void modification_verrouEtStatutRelu_avantLaModificationDeLActiviteEtLeRecalcul() {
+        when(courant.obtenir()).thenReturn(Donnees.connecte(manager));
+        when(activites.avancementMoyen(projet.getId())).thenReturn(55.0);
+        int[] avancementAuMomentDuVerrou = {-1};
+        when(projets.verrouiller(projet.getId())).thenAnswer(invocation -> {
+            avancementAuMomentDuVerrou[0] = activite.getAvancement();
+            return Optional.of(projet);
+        });
+        int avancementInitial = activite.getAvancement();
+
+        service.modifier(activite.getId(), new ModifierActiviteRequest(null, null, null, null, null, null, null, 55));
+
+        var ordre = inOrder(activites, projets);
+        ordre.verify(activites).findById(activite.getId());
+        ordre.verify(projets).verrouiller(projet.getId());
+        ordre.verify(projets).statutActuel(projet.getId());
+        ordre.verify(activites).avancementMoyen(projet.getId());
+        // Le verrou est pris avant que l'activité ne soit modifiée.
+        assertThat(avancementAuMomentDuVerrou[0]).isEqualTo(avancementInitial);
+        assertThat(activite.getAvancement()).isEqualTo(55);
+        assertThat(projet.getAvancement()).isEqualTo(55);
+        verify(projets, never()).findById(any());
+    }
+
+    @Test
+    void creation_verrouEtStatutRelu_avantLEnregistrementEtLeRecalcul_sansLectureNonVerrouillee() {
+        when(courant.obtenir()).thenReturn(Donnees.connecte(manager));
+
+        service.creer(new CreerActiviteRequest("Rapport", null, projet.getId(), null, null, null, null, null, null));
+
+        var ordre = inOrder(projets, activites);
+        ordre.verify(projets).verrouiller(projet.getId());
+        ordre.verify(projets).statutActuel(projet.getId());
+        ordre.verify(activites).saveAndFlush(any());
+        ordre.verify(activites).avancementMoyen(projet.getId());
+        verify(projets, never()).findById(any());
+    }
+
+    @Test
+    void suppression_verrouEtStatutRelu_avantLaSuppressionEtLeRecalcul() {
+        when(courant.obtenir()).thenReturn(Donnees.connecte(manager));
+
+        service.supprimer(activite.getId());
+
+        var ordre = inOrder(activites, projets);
+        ordre.verify(activites).findById(activite.getId());
+        ordre.verify(projets).verrouiller(projet.getId());
+        ordre.verify(projets).statutActuel(projet.getId());
+        ordre.verify(activites).delete(activite);
+        ordre.verify(activites).avancementMoyen(projet.getId());
+    }
+
+    // Le projet en mémoire est encore « en cours », mais la base indique qu'il vient d'être clos
+    // (clôture validée pendant que la requête attendait le verrou) : la décision suit la base.
+    @ParameterizedTest(name = "{0}")
+    @EnumSource(value = StatutProjet.class, names = {"TERMINE", "ARCHIVE"})
+    void statutReluApresLeVerrou_clotureConcurrente_toutEstRefuse(StatutProjet statut) {
+        when(projets.statutActuel(projet.getId())).thenReturn(Optional.of(statut));
+        when(courant.obtenir()).thenReturn(Donnees.connecte(manager));
+
+        assertThatThrownBy(() -> service.modifier(activite.getId(), requeteSur("title")))
+                .isInstanceOf(ConflitMetierException.class).hasMessage(MESSAGE_PROJET_CLOS);
+        assertThatThrownBy(() -> service.creer(new CreerActiviteRequest("X", null, projet.getId(), null, null,
+                null, null, null, null)))
+                .isInstanceOf(ConflitMetierException.class).hasMessage(MESSAGE_PROJET_CLOS);
+        assertThatThrownBy(() -> service.supprimer(activite.getId()))
+                .isInstanceOf(ConflitMetierException.class).hasMessage(MESSAGE_PROJET_CLOS);
+
+        assertThat(projet.getStatut()).isEqualTo(StatutProjet.EN_COURS);
+        assertThat(activite.getTitre()).isEqualTo("Saisie");
+        verify(activites, never()).saveAndFlush(any());
+        verify(activites, never()).delete(any(Activite.class));
+        verify(activites, never()).avancementMoyen(any());
+        verifyNoInteractions(audit, notifications);
+    }
+
+    @Test
+    void statutReluApresLeVerrou_reouvertureConcurrente_modificationAutorisee() {
+        // Le projet en mémoire est encore « terminé », mais la base indique qu'il a été rouvert.
+        projet.setStatut(StatutProjet.TERMINE);
+        when(projets.statutActuel(projet.getId())).thenReturn(Optional.of(StatutProjet.EN_COURS));
+        when(courant.obtenir()).thenReturn(Donnees.connecte(manager));
+
+        ActiviteResponse reponse = service.modifier(activite.getId(), requeteSur("title"));
+
+        assertThat(reponse.title()).isEqualTo("Nouveau titre");
+    }
+
+    @Test
+    void recalcul_neModifieQueLAvancementDuProjet_etProjetEnDynamicUpdate() {
+        // @DynamicUpdate : seules les colonnes modifiées sont écrites (le SQL réel se vérifie sur PostgreSQL).
+        assertThat(Projet.class.isAnnotationPresent(org.hibernate.annotations.DynamicUpdate.class)).isTrue();
+        projet.setDescription("Description du projet");
+        projet.setDateDebut(LocalDate.of(2025, 10, 1));
+        projet.setDateEcheance(LocalDate.of(2025, 12, 31));
+        List<Object> avant = Arrays.asList(projet.getNom(), projet.getDescription(), projet.getStatut(),
+                projet.getPriorite(), projet.getDateDebut(), projet.getDateEcheance(), projet.getChefDeProjet(),
+                List.copyOf(projet.utilisateursMembres()));
+        when(courant.obtenir()).thenReturn(Donnees.connecte(employe));
+        when(activites.avancementMoyen(projet.getId())).thenReturn(70.0);
+
+        service.modifier(activite.getId(), new ModifierActiviteRequest(null, null, null, null, null, null, null, 70));
+
+        assertThat(projet.getAvancement()).isEqualTo(70);
+        assertThat(Arrays.asList(projet.getNom(), projet.getDescription(), projet.getStatut(), projet.getPriorite(),
+                projet.getDateDebut(), projet.getDateEcheance(), projet.getChefDeProjet(),
+                List.copyOf(projet.utilisateursMembres()))).isEqualTo(avant);
+    }
+
+    @Test
+    void absences_comportementsInchanges() {
+        when(courant.obtenir()).thenReturn(Donnees.connecte(manager));
+        java.util.UUID inconnu = java.util.UUID.randomUUID();
+        when(activites.findById(inconnu)).thenReturn(Optional.empty());
+        when(projets.verrouiller(inconnu)).thenReturn(Optional.empty());
+
+        // Activité inexistante : 404, sans verrou.
+        assertThatThrownBy(() -> service.modifier(inconnu, requeteSur("title")))
+                .isInstanceOf(com.gestionsuivis.backend.exception.RessourceIntrouvableException.class);
+        assertThatThrownBy(() -> service.supprimer(inconnu))
+                .isInstanceOf(com.gestionsuivis.backend.exception.RessourceIntrouvableException.class);
+        verify(projets, never()).verrouiller(projet.getId());
+        // Projet inexistant à la création : 422 sur projectId, comme avant.
+        assertThatThrownBy(() -> service.creer(new CreerActiviteRequest("X", null, inconnu, null, null, null,
+                null, null, null)))
+                .isInstanceOf(RequeteInvalideException.class)
+                .hasMessage("Projet introuvable.")
+                .satisfies(e -> assertThat(((RequeteInvalideException) e).getChamp()).isEqualTo("projectId"));
+        verify(activites, never()).saveAndFlush(any());
+        verify(activites, never()).avancementMoyen(any());
     }
 }

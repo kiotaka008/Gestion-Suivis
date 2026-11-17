@@ -14,6 +14,7 @@ import com.gestionsuivis.backend.mapper.UtilisateurMapper;
 import com.gestionsuivis.backend.repository.ActiviteRepository;
 import com.gestionsuivis.backend.repository.ConversationIaRepository;
 import com.gestionsuivis.backend.repository.NotificationRepository;
+import com.gestionsuivis.backend.repository.OrganisationRepository;
 import com.gestionsuivis.backend.repository.ProjetRepository;
 import com.gestionsuivis.backend.repository.SpecificationsUtilisateur;
 import com.gestionsuivis.backend.repository.UtilisateurRepository;
@@ -52,6 +53,8 @@ public class UtilisateurService {
     private final ControleAcces controle;
     private final UtilisateurCourant utilisateurCourant;
     private final AuditService audit;
+    /** Verrou de l'organisation : garantie d'au moins un administrateur actif (AUD-002, S5). */
+    private final OrganisationRepository organisations;
 
     @Transactional(readOnly = true)
     public PageResponse<UtilisateurResponse> lister(String recherche, Role role, Boolean actif, Pageable pageable) {
@@ -96,7 +99,15 @@ public class UtilisateurService {
     public UtilisateurResponse modifier(UUID id, ModifierUtilisateurRequest requete) {
         UtilisateurConnecte u = utilisateurCourant.obtenir();
         controle.verifierAdmin(u);
-        Utilisateur utilisateur = charger(id);
+        // Rôle envoyé : il peut retirer un administrateur. Verrou de l'organisation AVANT toute
+        // lecture de l'utilisateur ciblé, pour décider sur des données à jour (S5).
+        Utilisateur utilisateur;
+        if (requete.role() != null) {
+            verrouillerOrganisation(u);
+            utilisateur = chargerApresVerrou(id, u);
+        } else {
+            utilisateur = charger(id);
+        }
         // Noms des champs modifiés uniquement (jamais l'email ni les autres valeurs).
         List<String> champs = new ArrayList<>();
         AuditService.siModifie(champs, "name", utilisateur.getNom(), requete.name() == null ? null : requete.name().trim());
@@ -138,7 +149,8 @@ public class UtilisateurService {
         if (u.id().equals(id)) {
             throw new ConflitMetierException("Vous ne pouvez pas désactiver votre propre compte.");
         }
-        Utilisateur utilisateur = charger(id);
+        verrouillerOrganisation(u);
+        Utilisateur utilisateur = chargerApresVerrou(id, u);
         if (utilisateur.getRole() == Role.ADMIN && utilisateur.isActif() && dernierAdministrateurActif()) {
             throw new ConflitMetierException("Impossible de désactiver le dernier administrateur actif.");
         }
@@ -159,7 +171,8 @@ public class UtilisateurService {
         if (u.id().equals(id)) {
             throw new ConflitMetierException("Vous ne pouvez pas supprimer votre propre compte.");
         }
-        Utilisateur utilisateur = charger(id);
+        verrouillerOrganisation(u);
+        Utilisateur utilisateur = chargerApresVerrou(id, u);
         if (utilisateur.getRole() == Role.ADMIN && utilisateur.isActif() && dernierAdministrateurActif()) {
             throw new ConflitMetierException("Impossible de supprimer le dernier administrateur actif.");
         }
@@ -197,6 +210,31 @@ public class UtilisateurService {
 
     Utilisateur charger(UUID id) {
         return utilisateurs.findById(id).orElseThrow(() -> new RessourceIntrouvableException("Utilisateur", id));
+    }
+
+    /**
+     * Verrouille l'organisation de l'administrateur connecté jusqu'à la fin de la transaction.
+     * Sérialise les opérations qui peuvent retirer un administrateur actif (désactivation,
+     * changement de rôle, suppression) : sans ce verrou, deux transactions simultanées comptent
+     * chacune deux administrateurs actifs et peuvent retirer les droits des deux. À appeler AVANT
+     * de charger l'utilisateur ciblé et de compter : les requêtes suivantes voient alors les
+     * opérations validées par la transaction précédente.
+     */
+    private void verrouillerOrganisation(UtilisateurConnecte u) {
+        organisations.verrouiller(u.organisationId())
+                .orElseThrow(() -> new RessourceIntrouvableException("Organisation", u.organisationId()));
+    }
+
+    /**
+     * Utilisateur ciblé, chargé après le verrou de l'organisation (jamais une entité lue avant), et
+     * appartenant à l'organisation de l'administrateur (même réponse 404 qu'un compte inexistant).
+     */
+    private Utilisateur chargerApresVerrou(UUID id, UtilisateurConnecte u) {
+        Utilisateur utilisateur = charger(id);
+        if (!u.organisationId().equals(utilisateur.getOrganisationId())) {
+            throw new RessourceIntrouvableException("Utilisateur", id);
+        }
+        return utilisateur;
     }
 
     private void changerEmail(Utilisateur utilisateur, String nouvelEmail) {

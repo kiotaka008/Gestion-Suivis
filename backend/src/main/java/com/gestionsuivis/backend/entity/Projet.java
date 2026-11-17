@@ -16,6 +16,7 @@ import lombok.Setter;
 import org.hibernate.annotations.BatchSize;
 import org.hibernate.annotations.ColumnTransformer;
 import org.hibernate.annotations.CreationTimestamp;
+import org.hibernate.annotations.DynamicUpdate;
 import org.hibernate.annotations.TenantId;
 import org.hibernate.annotations.UpdateTimestamp;
 import org.hibernate.annotations.UuidGenerator;
@@ -32,11 +33,17 @@ import java.util.UUID;
  * Projet : table {@code projects}, avec un chef de projet ({@code owner_id}) et des
  * membres ({@code project_members}). {@code progress} est recalculé par le backend à
  * chaque modification d'activité (moyenne des activités, une activité terminée = 100 %).
+ * <p>
+ * {@code @DynamicUpdate} : seules les colonnes réellement modifiées sont écrites. Le recalcul
+ * de l'avancement depuis une transaction d'activité n'écrit donc que {@code progress} (et
+ * {@code updated_at}) et ne peut plus écraser le nom, le statut, les dates ou le chef de projet
+ * modifiés par une autre transaction (AUD-002, S3).
  */
 @Getter
 @Setter
 @NoArgsConstructor
 @Entity
+@DynamicUpdate
 @Table(name = "projects")
 public class Projet {
 

@@ -9,6 +9,7 @@ import com.gestionsuivis.backend.entity.Priorite;
 import com.gestionsuivis.backend.entity.Projet;
 import com.gestionsuivis.backend.entity.RoleMembreProjet;
 import com.gestionsuivis.backend.entity.StatutActivite;
+import com.gestionsuivis.backend.entity.StatutProjet;
 import com.gestionsuivis.backend.entity.TypeNotification;
 import com.gestionsuivis.backend.entity.Utilisateur;
 import com.gestionsuivis.backend.exception.AccesInterditException;
@@ -36,6 +37,7 @@ import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.Objects;
+import java.util.function.Supplier;
 
 /**
  * Activités et tâches : CRUD, affectation, priorités, statuts et dates. La personne
@@ -84,12 +86,13 @@ public class ActiviteService {
     @Transactional
     public ActiviteResponse creer(CreerActiviteRequest requete) {
         UtilisateurConnecte u = utilisateurCourant.obtenir();
-        Projet projet = projets.findById(requete.projectId())
-                .orElseThrow(() -> new RequeteInvalideException("projectId", "Projet introuvable."));
+        // S3 : le projet est verrouillé, et chargé par la requête de verrouillage elle-même.
+        Projet projet = verrouillerProjet(requete.projectId(),
+                () -> new RequeteInvalideException("projectId", "Projet introuvable."));
         if (!controle.peutGererProjet(u, projet)) {
             throw new AccesInterditException("Vous n'avez pas les droits nécessaires pour ajouter une activité à ce projet.");
         }
-        verifierProjetOuvert(projet);
+        verifierProjetOuvert(projet.getId());
         ProjetService.verifierDates(requete.startDate(), requete.dueDate());
 
         Activite activite = new Activite();
@@ -119,6 +122,10 @@ public class ActiviteService {
     public ActiviteResponse modifier(UUID id, ModifierActiviteRequest requete) {
         UtilisateurConnecte u = utilisateurCourant.obtenir();
         Activite activite = charger(id);
+        // S3 : verrou du projet avant toute lecture de ses données (le projet de l'activité n'est
+        // encore qu'une référence non chargée) et avant le recalcul de l'avancement.
+        UUID projetId = activite.getProjet().getId();
+        verrouillerProjet(projetId, () -> new RessourceIntrouvableException("Projet", projetId));
         boolean gestionnaire = controle.peutGererActivite(u, activite);
         if (!gestionnaire) {
             if (!controle.estResponsableActivite(u, activite)) {
@@ -130,7 +137,7 @@ public class ActiviteService {
             }
         }
         // Après les droits (403), avant toute écriture : rien n'est modifié sur un projet clos (409).
-        verifierProjetOuvert(activite.getProjet());
+        verifierProjetOuvert(projetId);
         ProjetService.verifierDates(requete.startDate() != null ? requete.startDate() : activite.getDateDebut(),
                 requete.dueDate() != null ? requete.dueDate() : activite.getDateEcheance());
 
@@ -196,9 +203,11 @@ public class ActiviteService {
     public void supprimer(UUID id) {
         UtilisateurConnecte u = utilisateurCourant.obtenir();
         Activite activite = charger(id);
+        // S3 : verrou du projet avant le contrôle des droits, la suppression et le recalcul.
+        UUID projetId = activite.getProjet().getId();
+        Projet projet = verrouillerProjet(projetId, () -> new RessourceIntrouvableException("Projet", projetId));
         controle.verifierGererActivite(u, activite);
-        Projet projet = activite.getProjet();
-        verifierProjetOuvert(projet);
+        verifierProjetOuvert(projetId);
         String titre = activite.getTitre();
         activites.delete(activite);
         activites.flush();
@@ -211,11 +220,25 @@ public class ActiviteService {
     // ---------------------------------------------------------------- utilitaires
 
     /**
+     * Verrouille le projet jusqu'à la fin de la transaction (AUD-002, S3). Les créations,
+     * modifications et suppressions d'activités d'un même projet, et le recalcul de son
+     * avancement, sont ainsi exécutés l'un après l'autre : chaque recalcul voit les activités
+     * validées par la transaction précédente. Ordre des verrous : projet, puis activités.
+     */
+    private Projet verrouillerProjet(UUID projetId, Supplier<? extends RuntimeException> absent) {
+        return projets.verrouiller(projetId).orElseThrow(absent);
+    }
+
+    /**
      * Un projet terminé ou archivé est en lecture seule pour ses activités : ni création,
      * ni modification, ni suppression (409). Il faut d'abord le rouvrir.
+     * Le statut est relu en base après le verrou, jamais pris sur une entité lue avant :
+     * une clôture validée entre-temps est donc respectée.
      */
-    private static void verifierProjetOuvert(Projet projet) {
-        if (projet.getStatut().estClos()) {
+    private void verifierProjetOuvert(UUID projetId) {
+        StatutProjet statut = projets.statutActuel(projetId)
+                .orElseThrow(() -> new RessourceIntrouvableException("Projet", projetId));
+        if (statut.estClos()) {
             throw new ConflitMetierException("Impossible d'ajouter une activité à un projet terminé ou archivé.");
         }
     }

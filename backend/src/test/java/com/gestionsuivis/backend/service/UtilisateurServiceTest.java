@@ -4,6 +4,7 @@ import com.gestionsuivis.backend.dto.utilisateur.CreerUtilisateurRequest;
 import com.gestionsuivis.backend.dto.utilisateur.ModifierProfilRequest;
 import com.gestionsuivis.backend.dto.utilisateur.ModifierUtilisateurRequest;
 import com.gestionsuivis.backend.dto.utilisateur.UtilisateurResponse;
+import com.gestionsuivis.backend.entity.Organisation;
 import com.gestionsuivis.backend.entity.Projet;
 import com.gestionsuivis.backend.entity.Role;
 import com.gestionsuivis.backend.entity.Utilisateur;
@@ -14,6 +15,7 @@ import com.gestionsuivis.backend.mapper.UtilisateurMapper;
 import com.gestionsuivis.backend.repository.ActiviteRepository;
 import com.gestionsuivis.backend.repository.ConversationIaRepository;
 import com.gestionsuivis.backend.repository.NotificationRepository;
+import com.gestionsuivis.backend.repository.OrganisationRepository;
 import com.gestionsuivis.backend.repository.ProjetRepository;
 import com.gestionsuivis.backend.repository.UtilisateurRepository;
 import com.gestionsuivis.backend.security.ControleAcces;
@@ -35,6 +37,7 @@ import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.anyString;
 import static org.mockito.ArgumentMatchers.eq;
+import static org.mockito.Mockito.inOrder;
 import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.verify;
@@ -50,9 +53,11 @@ class UtilisateurServiceTest {
     private final NotificationRepository notifications = mock(NotificationRepository.class);
     private final UtilisateurCourant courant = mock(UtilisateurCourant.class);
     private final AuditService audit = mock(AuditService.class);
+    private final OrganisationRepository organisations = mock(OrganisationRepository.class);
     private final BCryptPasswordEncoder encodeur = new BCryptPasswordEncoder(4);
     private final UtilisateurService service = new UtilisateurService(utilisateurs, projets, activites, conversations,
-            notifications, encodeur, new UtilisateurMapper(), new ControleAcces(projets, activites), courant, audit);
+            notifications, encodeur, new UtilisateurMapper(), new ControleAcces(projets, activites), courant, audit,
+            organisations);
 
     private final Utilisateur admin = Donnees.utilisateur("Admin", Role.ADMIN);
     private final Utilisateur manager = Donnees.utilisateur("Manager", Role.MANAGER);
@@ -71,6 +76,9 @@ class UtilisateurServiceTest {
             return u;
         });
         when(utilisateurs.countByRoleAndActifTrue(Role.ADMIN)).thenReturn(2L);
+        Organisation organisation = new Organisation();
+        organisation.setId(Donnees.ORGANISATION);
+        when(organisations.verrouiller(Donnees.ORGANISATION)).thenReturn(Optional.of(organisation));
     }
 
     private void connecter(Utilisateur u) {
@@ -240,6 +248,175 @@ class UtilisateurServiceTest {
     void suppression_desonPropreCompte_refusee() {
         connecter(admin);
         assertThatThrownBy(() -> service.supprimer(admin.getId())).isInstanceOf(ConflitMetierException.class);
+    }
+
+    // ---------------------------------------------------------------- dernier administrateur actif (AUD-002, S5)
+    // Mockito vérifie l'ordre « verrou de l'organisation, puis chargement, puis comptage » et les
+    // décisions ; l'exclusion mutuelle réelle de deux transactions ne se démontre que sur PostgreSQL.
+
+    private Utilisateur autreAdmin() {
+        Utilisateur autre = Donnees.utilisateur("Autre admin", Role.ADMIN);
+        when(utilisateurs.findById(autre.getId())).thenReturn(Optional.of(autre));
+        return autre;
+    }
+
+    @Test
+    void desactivationDUnAdministrateur_autoriseeSiUnAutreReste_verrouPuisChargementPuisComptage() {
+        Utilisateur autre = autreAdmin();
+        connecter(admin);
+
+        service.desactiver(autre.getId());
+
+        var ordre = inOrder(organisations, utilisateurs);
+        ordre.verify(organisations).verrouiller(Donnees.ORGANISATION);
+        ordre.verify(utilisateurs).findById(autre.getId());
+        ordre.verify(utilisateurs).countByRoleAndActifTrue(Role.ADMIN);
+        assertThat(autre.isActif()).isFalse();
+        verify(audit).journaliser(admin.getId(), "deactivated", AuditService.UTILISATEUR, autre.getId());
+    }
+
+    @Test
+    void desactivationDuDernierAdministrateur_refuseeApresVerrou_sansModification() {
+        Utilisateur autre = autreAdmin();
+        when(utilisateurs.countByRoleAndActifTrue(Role.ADMIN)).thenReturn(1L);
+        connecter(admin);
+
+        assertThatThrownBy(() -> service.desactiver(autre.getId()))
+                .isInstanceOf(ConflitMetierException.class)
+                .hasMessage("Impossible de désactiver le dernier administrateur actif.");
+
+        var ordre = inOrder(organisations, utilisateurs);
+        ordre.verify(organisations).verrouiller(Donnees.ORGANISATION);
+        ordre.verify(utilisateurs).findById(autre.getId());
+        ordre.verify(utilisateurs).countByRoleAndActifTrue(Role.ADMIN);
+        assertThat(autre.isActif()).isTrue();
+        verify(audit, never()).journaliser(any(), eq("deactivated"), any(), any());
+    }
+
+    @Test
+    void retrogradationDUnAdministrateur_autoriseeSiUnAutreReste_verrouAvantChargement() {
+        Utilisateur autre = autreAdmin();
+        connecter(admin);
+
+        service.modifier(autre.getId(), new ModifierUtilisateurRequest(null, null, Role.MANAGER, null));
+
+        var ordre = inOrder(organisations, utilisateurs);
+        ordre.verify(organisations).verrouiller(Donnees.ORGANISATION);
+        ordre.verify(utilisateurs).findById(autre.getId());
+        ordre.verify(utilisateurs).countByRoleAndActifTrue(Role.ADMIN);
+        assertThat(autre.getRole()).isEqualTo(Role.MANAGER);
+    }
+
+    @Test
+    void retrogradationDuDernierAdministrateur_refusee_roleInchange() {
+        Utilisateur autre = autreAdmin();
+        when(utilisateurs.countByRoleAndActifTrue(Role.ADMIN)).thenReturn(1L);
+        connecter(admin);
+
+        assertThatThrownBy(() -> service.modifier(autre.getId(),
+                new ModifierUtilisateurRequest(null, null, Role.EMPLOYE, null)))
+                .isInstanceOf(ConflitMetierException.class)
+                .hasMessage("Impossible de retirer le rôle du dernier administrateur actif.");
+
+        var ordre = inOrder(organisations, utilisateurs);
+        ordre.verify(organisations).verrouiller(Donnees.ORGANISATION);
+        ordre.verify(utilisateurs).countByRoleAndActifTrue(Role.ADMIN);
+        assertThat(autre.getRole()).isEqualTo(Role.ADMIN);
+    }
+
+    @Test
+    void suppressionDuDernierAdministrateurActif_refusee_sansSuppression() {
+        Utilisateur autre = autreAdmin();
+        when(utilisateurs.countByRoleAndActifTrue(Role.ADMIN)).thenReturn(1L);
+        connecter(admin);
+
+        assertThatThrownBy(() -> service.supprimer(autre.getId()))
+                .isInstanceOf(ConflitMetierException.class)
+                .hasMessage("Impossible de supprimer le dernier administrateur actif.");
+
+        var ordre = inOrder(organisations, utilisateurs);
+        ordre.verify(organisations).verrouiller(Donnees.ORGANISATION);
+        ordre.verify(utilisateurs).findById(autre.getId());
+        ordre.verify(utilisateurs).countByRoleAndActifTrue(Role.ADMIN);
+        verify(utilisateurs, never()).delete(any(Utilisateur.class));
+    }
+
+    @Test
+    void suppressionDUnAdministrateur_autoriseeSiUnAutreReste() {
+        Utilisateur autre = autreAdmin();
+        connecter(admin);
+
+        service.supprimer(autre.getId());
+
+        var ordre = inOrder(organisations, utilisateurs);
+        ordre.verify(organisations).verrouiller(Donnees.ORGANISATION);
+        ordre.verify(utilisateurs).findById(autre.getId());
+        ordre.verify(utilisateurs).countByRoleAndActifTrue(Role.ADMIN);
+        ordre.verify(utilisateurs).delete(autre);
+    }
+
+    @Test
+    void desactivationDUnNonAdministrateur_autorisee_sansComptage() {
+        connecter(admin);
+
+        service.desactiver(employe.getId());
+
+        verify(organisations).verrouiller(Donnees.ORGANISATION);
+        verify(utilisateurs, never()).countByRoleAndActifTrue(any());
+        assertThat(employe.isActif()).isFalse();
+    }
+
+    @Test
+    void organisationIntrouvable_aucunChargementNiComptageNiModification() {
+        // Le verrou n'est pas obtenu : rien n'est lu ni décidé (le comptage n'a jamais lieu avant le verrou).
+        when(organisations.verrouiller(Donnees.ORGANISATION)).thenReturn(Optional.empty());
+        Utilisateur autre = autreAdmin();
+        connecter(admin);
+
+        assertThatThrownBy(() -> service.desactiver(autre.getId())).isInstanceOf(RessourceIntrouvableException.class);
+        assertThatThrownBy(() -> service.supprimer(autre.getId())).isInstanceOf(RessourceIntrouvableException.class);
+        assertThatThrownBy(() -> service.modifier(autre.getId(),
+                new ModifierUtilisateurRequest(null, null, Role.MANAGER, null)))
+                .isInstanceOf(RessourceIntrouvableException.class);
+
+        verify(utilisateurs, never()).findById(autre.getId());
+        verify(utilisateurs, never()).countByRoleAndActifTrue(any());
+        assertThat(autre.isActif()).isTrue();
+        assertThat(autre.getRole()).isEqualTo(Role.ADMIN);
+    }
+
+    @Test
+    void utilisateurDUneAutreOrganisation_404_sansComptageNiModification() {
+        Utilisateur etranger = Donnees.utilisateur("Etranger", Role.ADMIN);
+        etranger.setOrganisationId(UUID.fromString("00000000-0000-4000-8000-000000000099"));
+        when(utilisateurs.findById(etranger.getId())).thenReturn(Optional.of(etranger));
+        connecter(admin);
+
+        assertThatThrownBy(() -> service.desactiver(etranger.getId())).isInstanceOf(RessourceIntrouvableException.class);
+        assertThatThrownBy(() -> service.modifier(etranger.getId(),
+                new ModifierUtilisateurRequest(null, null, Role.EMPLOYE, null)))
+                .isInstanceOf(RessourceIntrouvableException.class);
+
+        verify(utilisateurs, never()).countByRoleAndActifTrue(any());
+        assertThat(etranger.isActif()).isTrue();
+        assertThat(etranger.getRole()).isEqualTo(Role.ADMIN);
+    }
+
+    @Test
+    void modificationSansRole_promotionEtActivation_sansComptage() {
+        connecter(admin);
+
+        // Sans rôle envoyé : aucun retrait d'administrateur possible, donc aucun verrou.
+        service.modifier(employe.getId(), new ModifierUtilisateurRequest("Nouveau nom", null, null, null));
+        verify(organisations, never()).verrouiller(any());
+
+        // Promotion et activation ne font qu'ajouter des administrateurs : jamais de comptage.
+        service.modifier(employe.getId(), new ModifierUtilisateurRequest(null, null, Role.ADMIN, null));
+        assertThat(employe.getRole()).isEqualTo(Role.ADMIN);
+        employe.setActif(false);
+        service.activer(employe.getId());
+        assertThat(employe.isActif()).isTrue();
+        verify(utilisateurs, never()).countByRoleAndActifTrue(any());
     }
 
     // ---------------------------------------------------------------- profil

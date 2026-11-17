@@ -185,7 +185,10 @@ public class ProjetService {
     public void supprimer(UUID id) {
         UtilisateurConnecte u = utilisateurCourant.obtenir();
         controle.verifierAdmin(u);
-        Projet projet = charger(id);
+        // S3 : verrou du projet AVANT la suppression de ses activités, dans le même ordre que
+        // ActiviteService (projet, puis activités) : pas d'interblocage avec une modification
+        // d'activité en cours, et aucune activité ne peut être créée dans le projet pendant ce temps.
+        Projet projet = projets.verrouiller(id).orElseThrow(() -> new RessourceIntrouvableException("Projet", id));
         activites.deleteAll(activites.findByProjetId(id));
         projet.getMembres().clear();
         projets.delete(projet);
