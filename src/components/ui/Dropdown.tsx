@@ -6,6 +6,8 @@ export interface DropdownItem {
   icon?: ReactNode;
   onClick?: () => void;
   variant?: 'default' | 'danger';
+  /** Entrée visible mais non cliquable (par exemple pendant une requête en cours). */
+  disabled?: boolean;
 }
 
 export interface DropdownProps {
@@ -91,12 +93,15 @@ export function Dropdown({ trigger, items: entrees, align = 'right' }: DropdownP
             <button
               key={i}
               role="menuitem"
+              disabled={item.disabled}
+              aria-disabled={item.disabled || undefined}
               onClick={() => {
+                if (item.disabled) return;
                 item.onClick?.();
                 setOpen(false);
               }}
               className={cn(
-                'flex w-full items-center gap-2 rounded-sm px-3 py-2 text-left text-sm transition-colors focus:outline-none focus:bg-muted',
+                'flex w-full items-center gap-2 rounded-sm px-3 py-2 text-left text-sm transition-colors focus:outline-none focus:bg-muted disabled:cursor-not-allowed disabled:opacity-50',
                 item.variant === 'danger' ? 'text-danger hover:bg-danger/10' : 'text-foreground hover:bg-muted'
               )}
             >

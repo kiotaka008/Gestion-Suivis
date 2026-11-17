@@ -36,6 +36,7 @@ import { userService } from '../services/userService';
 import { usePermissions } from '../hooks/usePermissions';
 import { HistoryTimeline } from '../components/history/HistoryTimeline';
 import { Alert } from '../components/ui/Alert';
+import { BoutonActualiser } from '../components/ui/BoutonActualiser';
 import { Spinner } from '../components/ui/Spinner';
 import { projectService } from '../services/projectService';
 import { ApiError } from '../services/ApiError';
@@ -158,6 +159,8 @@ export function ProjectDetailPage() {
   const [project, setProject] = useState<Project | null>(null);
   const [activities, setActivities] = useState<Activity[]>([]);
   const [isLoading, setIsLoading] = useState(true);
+  // AUD-002, F9 : incrémenté par « Actualiser » pour relire aussi l'historique.
+  const [versionHistorique, setVersionHistorique] = useState(0);
   const [error, setError] = useState<string | null>(null);
 
   const permissions = usePermissions();
@@ -208,6 +211,45 @@ export function ProjectDetailPage() {
     setProject(await projectService.update(project.id, data));
   };
 
+  // Conflit 409 : le projet est relu ; le formulaire garde la saisie jusqu'au clic « Recharger ».
+  const rechargerProjet = async () => {
+    if (!project) return;
+    setProject(await projectService.getById(project.id));
+  };
+
+  // AUD-002, F9 : après un 404 ou un 409, le projet est relu une fois (un 404 peut aussi viser
+  // un membre : seule une relecture en 404 signifie que le projet a disparu). Le message
+  // d'erreur déjà affiché n'est jamais remplacé.
+  const relireProjetApresEchec = async (err: unknown) => {
+    if (!project) return;
+    const statut = err instanceof ApiError ? err.status : undefined;
+    if (statut !== 404 && statut !== 409) return;
+    try {
+      setProject(await projectService.getById(project.id));
+    } catch (relecture) {
+      if (relecture instanceof ApiError && relecture.status === 404) setProject(null);
+    }
+  };
+
+  // AUD-002, F9 : actualisation manuelle du projet, de ses activités et de son historique ;
+  // les formulaires ouverts gardent leur saisie (ils comparent à leur propre référence).
+  const actualiser = async () => {
+    if (!project) return;
+    try {
+      const [projet, liste] = await Promise.all([
+        projectService.getById(project.id),
+        projectService.activities(project.id),
+      ]);
+      setProject(projet);
+      setActivities(liste);
+      setVersionHistorique((v) => v + 1);
+      setError(null);
+    } catch (err) {
+      setError(err instanceof ApiError ? err.message : 'Actualisation impossible.');
+      if (err instanceof ApiError && err.status === 404) setProject(null);
+    }
+  };
+
   const executer = async (action: () => Promise<Project>, messageEchec: string) => {
     setError(null);
     setEnCours(true);
@@ -216,6 +258,7 @@ export function ProjectDetailPage() {
       return true;
     } catch (err) {
       setError(err instanceof ApiError ? err.message : messageEchec);
+      await relireProjetApresEchec(err);
       return false;
     } finally {
       setEnCours(false);
@@ -240,7 +283,15 @@ export function ProjectDetailPage() {
 
   const handleCreateActivity = async (data: Partial<Activity>) => {
     if (!project) return;
-    const creee = await activityService.create({ ...data, projectId: project.id });
+    let creee: Activity;
+    try {
+      creee = await activityService.create({ ...data, projectId: project.id });
+    } catch (err) {
+      // AUD-002, F9 : projet relu (clôture, par exemple) ; le formulaire affiche le message et
+      // garde la saisie.
+      await relireProjetApresEchec(err);
+      throw err;
+    }
     setActivities((prev) => [creee, ...prev]);
     // La progression du projet est recalculée par le backend.
     setProject(await projectService.getById(project.id));
@@ -279,6 +330,9 @@ export function ProjectDetailPage() {
     } catch (err) {
       setDeleteOpen(false);
       setError(err instanceof ApiError ? err.message : 'Suppression impossible.');
+      // 404 : le projet a disparu (« introuvable ») ; 409 : relu.
+      if (err instanceof ApiError && err.status === 404) setProject(null);
+      else await relireProjetApresEchec(err);
     } finally {
       setIsDeleting(false);
     }
@@ -345,6 +399,7 @@ export function ProjectDetailPage() {
         </div>
 
         <div className="flex flex-wrap items-center gap-2">
+          <BoutonActualiser onActualiser={actualiser} />
           {peutGerer && (
             <Button variant="outline" leftIcon={<Edit className="h-4 w-4" />} onClick={() => setIsEditOpen(true)}>
               Modifier
@@ -679,7 +734,7 @@ export function ProjectDetailPage() {
               <CardDescription>Actions sur le projet et ses activités, de la plus récente à la plus ancienne.</CardDescription>
             </CardHeader>
             <CardContent>
-              <HistoryTimeline load={chargerHistorique} />
+              <HistoryTimeline key={versionHistorique} load={chargerHistorique} />
             </CardContent>
           </Card>
         )}
@@ -694,6 +749,7 @@ export function ProjectDetailPage() {
           owners={permissions.isAdmin ? users : undefined}
           onClose={() => setIsEditOpen(false)}
           onCreate={handleUpdate}
+          onConflit={rechargerProjet}
         />
       )}
 

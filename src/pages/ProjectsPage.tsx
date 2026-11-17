@@ -23,6 +23,7 @@ import { CreateProjectModal } from '../components/projects/CreateProjectModal';
 import { SkeletonTable } from '../components/ui/SkeletonTable';
 import type { Project, ProjectStatus, Priority } from '../types/models';
 import { Alert } from '../components/ui/Alert';
+import { BoutonActualiser } from '../components/ui/BoutonActualiser';
 import { projectService } from '../services/projectService';
 import { ApiError } from '../services/ApiError';
 import { usePermissions } from '../hooks/usePermissions';
@@ -172,6 +173,42 @@ export function ProjectsPage() {
     setProjects((prev) => prev.map((p) => (p.id === modifie.id ? modifie : p)));
   };
 
+  // Conflit 409 : le projet est relu ; le formulaire garde la saisie jusqu'au clic « Recharger ».
+  const rechargerProjet = async () => {
+    if (!editTarget) return;
+    const actuel = await projectService.getById(editTarget.id);
+    setProjects((prev) => prev.map((p) => (p.id === actuel.id ? actuel : p)));
+    setEditTarget(actuel);
+  };
+
+  // AUD-002, F9 : après un 404, le projet a disparu (retiré de la liste) ; après un 409, il est
+  // relu une fois. Le message d'erreur déjà affiché n'est jamais remplacé.
+  const relireProjetApresEchec = async (id: string, err: unknown) => {
+    const statut = err instanceof ApiError ? err.status : undefined;
+    const retirer = () => setProjects((prev) => prev.filter((p) => p.id !== id));
+    if (statut === 404) {
+      retirer();
+      return;
+    }
+    if (statut !== 409) return;
+    try {
+      const actuel = await projectService.getById(id);
+      setProjects((prev) => prev.map((p) => (p.id === actuel.id ? actuel : p)));
+    } catch (relecture) {
+      if (relecture instanceof ApiError && relecture.status === 404) retirer();
+    }
+  };
+
+  // AUD-002, F9 : actualisation manuelle ; ni le formulaire ouvert ni sa cible ne sont modifiés.
+  const actualiser = async () => {
+    try {
+      setProjects(await projectService.listAll());
+      setError(null);
+    } catch (err) {
+      setError(err instanceof ApiError ? err.message : 'Actualisation impossible.');
+    }
+  };
+
   const handleDeleteConfirm = async () => {
     if (!deleteTarget) return;
     setIsDeleting(true);
@@ -180,6 +217,7 @@ export function ProjectsPage() {
       setProjects((prev) => prev.filter((p) => p.id !== deleteTarget.id));
     } catch (err) {
       setError(err instanceof ApiError ? err.message : 'Suppression impossible.');
+      await relireProjetApresEchec(deleteTarget.id, err);
     } finally {
       setIsDeleting(false);
       setDeleteTarget(null);
@@ -192,14 +230,17 @@ export function ProjectsPage() {
         title="Projets"
         description="Gérez tous vos projets en un seul endroit."
         actions={
-          permissions.canCreateProject && (
-            <Button
-              leftIcon={<Plus className="h-4 w-4" />}
-              onClick={() => setIsCreateOpen(true)}
-            >
-              Nouveau projet
-            </Button>
-          )
+          <>
+            <BoutonActualiser onActualiser={actualiser} />
+            {permissions.canCreateProject && (
+              <Button
+                leftIcon={<Plus className="h-4 w-4" />}
+                onClick={() => setIsCreateOpen(true)}
+              >
+                Nouveau projet
+              </Button>
+            )}
+          </>
         }
       />
 
@@ -356,6 +397,7 @@ export function ProjectsPage() {
           project={editTarget}
           onClose={() => setEditTarget(null)}
           onCreate={handleUpdate}
+          onConflit={rechargerProjet}
         />
       )}
 

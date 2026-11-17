@@ -8,6 +8,19 @@ import { Alert } from '../ui/Alert';
 import { useAuth } from '../../hooks/useAuth';
 import { userService } from '../../services/userService';
 import { ApiError } from '../../services/ApiError';
+import type { User } from '../../types/models';
+import { champsModifies, normaliser } from '../../utils/modifications';
+
+/** Champs du formulaire « Informations personnelles » (AUD-002, F8). */
+interface ChampsProfil {
+  name: string;
+  email: string;
+}
+
+const champsDe = (u: User | null): ChampsProfil => ({ name: u?.name ?? '', email: u?.email ?? '' });
+
+/** Mêmes normalisations que le backend : nom sans espaces de bord, email en minuscules. */
+const NORMALISEURS_PROFIL = { name: normaliser.texte, email: normaliser.email };
 
 /** Taille de la photo enregistrée (carré, en pixels) : assez petite pour tenir dans users.avatar_url. */
 const TAILLE_AVATAR = 128;
@@ -51,13 +64,21 @@ export function ProfileSection() {
 
   const fileInputRef = useRef<HTMLInputElement>(null);
 
-  // Le profil peut arriver après l'ouverture de la page : on resynchronise le formulaire.
+  // AUD-002, F8 : référence = dernière version connue du serveur. Seuls les champs qui en
+  // diffèrent sont envoyés.
+  const [reference, setReference] = useState<ChampsProfil>(() => champsDe(user));
+
+  // Le profil peut arriver après l'ouverture de la page, ou changer après un enregistrement
+  // (photo, par exemple) : la référence suit, mais un champ en cours de saisie (différent de la
+  // référence) n'est jamais écrasé ; seuls les champs non modifiés reprennent la valeur reçue.
   const [utilisateurAffiche, setUtilisateurAffiche] = useState(user);
   if (user !== utilisateurAffiche) {
     setUtilisateurAffiche(user);
     if (user) {
-      setName(user.name);
-      setEmail(user.email);
+      const recus = champsDe(user);
+      if (name === reference.name) setName(recus.name);
+      if (email === reference.email) setEmail(recus.email);
+      setReference(recus);
       setAvatar(user.avatarUrl ?? null);
     }
   }
@@ -113,7 +134,15 @@ export function ProfileSection() {
 
   const handleSubmit = async (e: FormEvent<HTMLFormElement>) => {
     e.preventDefault();
-    await enregistrer({ name: name.trim(), email: email.trim() }, 'Vos informations ont été mises à jour.');
+    // AUD-002, F8 : seuls les champs réellement modifiés ; aucune requête ni message sinon.
+    const modifies = champsModifies(reference, { name, email }, NORMALISEURS_PROFIL);
+    if (modifies.length === 0) return;
+    const payload: { name?: string; email?: string } = {};
+    if (modifies.includes('name')) payload.name = name.trim();
+    if (modifies.includes('email')) payload.email = email.trim().toLowerCase();
+    // Validations inchangées : le backend refuse un nom vide (422) ou un email déjà utilisé (409),
+    // et la saisie est conservée.
+    await enregistrer(payload, 'Vos informations ont été mises à jour.');
   };
 
   return (

@@ -7,16 +7,25 @@ import { Select } from '../ui/Select';
 import { Button } from '../ui/Button';
 import { Alert } from '../ui/Alert';
 import type { Project, Priority, ProjectStatus, User } from '../../types/models';
+import { aEteVide, champsModifies, MESSAGE_DATE_NON_EFFACABLE, normaliser } from '../../utils/modifications';
 
 export interface CreateProjectModalProps {
   isOpen: boolean;
   onClose: () => void;
-  /** Création, ou modification quand `project` est fourni. */
+  /**
+   * Création, ou modification quand `project` est fourni. En modification, seuls les champs
+   * modifiés sont transmis ; le statut n'y figure que s'il a été changé (AUD-002, F3).
+   */
   onCreate: (data: Partial<Project>) => Promise<void> | void;
   /** Projet à modifier : le formulaire passe en mode édition (le parent fournit une `key` par projet). */
   project?: Project;
   /** Chefs de projet possibles (mode édition) ; liste vide ou absente : champ non affiché. */
   owners?: User[];
+  /**
+   * Conflit 409 en modification : le parent relit le projet et met à jour `project`.
+   * La saisie n'est jamais remplacée automatiquement (bouton « Recharger les valeurs actuelles »).
+   */
+  onConflit?: () => Promise<void>;
 }
 
 interface FormState {
@@ -48,17 +57,52 @@ const PROJECT_STATUS_OPTIONS: { value: ProjectStatus; label: string }[] = [
   { value: 'archived', label: 'Archivé' },
 ];
 
-export function CreateProjectModal({ isOpen, onClose, onCreate, project, owners }: CreateProjectModalProps) {
+export function CreateProjectModal({ isOpen, onClose, onCreate, project, owners, onConflit }: CreateProjectModalProps) {
   const isEdit = !!project;
   const [form, setForm] = useState<FormState>(() => etatInitial(project));
+  // Valeurs lues à l'ouverture : la comparaison se fait toujours avec elles, jamais avec `project`,
+  // qui peut être relu entre-temps (conflit 409).
+  const [reference, setReference] = useState<FormState>(() => etatInitial(project));
   const [isSubmitting, setIsSubmitting] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [conflit, setConflit] = useState<'aucun' | 'rechargement' | 'pret' | 'echec'>('aucun');
 
   const handleClose = () => {
     if (isSubmitting) return;
     setForm(etatInitial(project));
+    setReference(etatInitial(project));
     setError(null);
+    setConflit('aucun');
     onClose();
+  };
+
+  /** Remplace la saisie par les valeurs actuelles, uniquement sur demande de l'utilisateur. */
+  const rechargerValeursActuelles = () => {
+    setForm(etatInitial(project));
+    setReference(etatInitial(project));
+    setError(null);
+    setConflit('aucun');
+  };
+
+  /** Modification : uniquement les champs changés depuis l'ouverture (jamais l'avancement). */
+  const donneesModifiees = (): Partial<Project> => {
+    const modifies = champsModifies(
+      { name: reference.name, description: reference.description, priority: reference.priority,
+        status: reference.status, startDate: reference.startDate, dueDate: reference.dueDate },
+      { name: form.name, description: form.description, priority: form.priority,
+        status: form.status, startDate: form.startDate, dueDate: form.dueDate },
+      { name: normaliser.texte, description: normaliser.texte, startDate: normaliser.date, dueDate: normaliser.date }
+    );
+    let donnees: Partial<Project> = {};
+    if (modifies.includes('name')) donnees = { ...donnees, name: form.name.trim() };
+    // Chaîne vide : le backend efface la description.
+    if (modifies.includes('description')) donnees = { ...donnees, description: form.description.trim() };
+    if (modifies.includes('priority')) donnees = { ...donnees, priority: form.priority };
+    if (modifies.includes('status')) donnees = { ...donnees, status: form.status };
+    if (modifies.includes('startDate')) donnees = { ...donnees, startDate: form.startDate };
+    if (modifies.includes('dueDate')) donnees = { ...donnees, dueDate: form.dueDate };
+    if (form.ownerId && form.ownerId !== reference.ownerId) donnees = { ...donnees, ownerId: form.ownerId };
+    return donnees;
   };
 
   const handleSubmit = async (e: FormEvent<HTMLFormElement>) => {
@@ -74,19 +118,25 @@ export function CreateProjectModal({ isOpen, onClose, onCreate, project, owners 
       return;
     }
 
+    let donnees: Partial<Project> = {};
+    if (isEdit) {
+      // D2 : une date vidée ne peut pas encore être effacée par le backend, on bloque explicitement.
+      if (aEteVide(reference.startDate, form.startDate) || aEteVide(reference.dueDate, form.dueDate)) {
+        setError(MESSAGE_DATE_NON_EFFACABLE);
+        return;
+      }
+      donnees = donneesModifiees();
+      // D1 : rien n'a changé, aucune requête.
+      if (Object.keys(donnees).length === 0) {
+        handleClose();
+        return;
+      }
+    }
+
     setIsSubmitting(true);
     try {
       if (isEdit) {
-        await onCreate({
-          name: form.name.trim(),
-          // Chaîne vide : le backend efface la description.
-          description: form.description.trim(),
-          priority: form.priority,
-          status: form.status,
-          startDate: form.startDate || undefined,
-          dueDate: form.dueDate || undefined,
-          ownerId: form.ownerId && form.ownerId !== project.ownerId ? form.ownerId : undefined,
-        });
+        await onCreate(donnees);
       } else {
         await onCreate({
           name: form.name.trim(),
@@ -99,6 +149,7 @@ export function CreateProjectModal({ isOpen, onClose, onCreate, project, owners 
         });
         setForm(etatInitial());
       }
+      setConflit('aucun');
       onClose();
     } catch (err) {
       setError(
@@ -108,6 +159,16 @@ export function CreateProjectModal({ isOpen, onClose, onCreate, project, owners 
           ? 'Impossible de modifier le projet. Veuillez réessayer.'
           : 'Impossible de créer le projet. Veuillez réessayer.'
       );
+      // Conflit 409 : la saisie est conservée ; le parent relit le projet.
+      if (isEdit && err instanceof ApiError && err.status === 409 && onConflit) {
+        setConflit('rechargement');
+        try {
+          await onConflit();
+          setConflit('pret');
+        } catch {
+          setConflit('echec');
+        }
+      }
     } finally {
       setIsSubmitting(false);
     }
@@ -135,6 +196,18 @@ export function CreateProjectModal({ isOpen, onClose, onCreate, project, owners 
       {error && (
         <Alert variant="danger" className="mb-4">
           {error}
+        </Alert>
+      )}
+
+      {conflit !== 'aucun' && (
+        <Alert variant="warning" className="mb-4">
+          <p>Les données ont pu être modifiées entre-temps. Votre saisie est conservée.</p>
+          {conflit === 'echec' && <p className="mt-1">Impossible de relire les valeurs actuelles.</p>}
+          {conflit === 'pret' && (
+            <Button type="button" size="sm" variant="outline" className="mt-2" onClick={rechargerValeursActuelles}>
+              Recharger les valeurs actuelles
+            </Button>
+          )}
         </Alert>
       )}
 

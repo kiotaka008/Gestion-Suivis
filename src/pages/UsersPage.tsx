@@ -1,4 +1,4 @@
-import { useCallback, useMemo, useState, useEffect } from 'react';
+import { useCallback, useMemo, useRef, useState, useEffect } from 'react';
 import { Edit, History, MoreVertical, Plus, Trash2, UserCheck, UserX, Users } from 'lucide-react';
 import { Modal } from '../components/ui/Modal';
 import { HistoryTimeline } from '../components/history/HistoryTimeline';
@@ -21,9 +21,10 @@ import {
 } from '../components/ui/Table';
 import { UsersFilters, type ViewMode } from '../components/users/UsersFilters';
 import { UserCard } from '../components/users/UserCard';
-import { CreateUserModal } from '../components/users/CreateUserModal';
+import { CreateUserModal, type UserUpdatePayload } from '../components/users/CreateUserModal';
 import type { User, Role } from '../types/models';
 import { Alert } from '../components/ui/Alert';
+import { BoutonActualiser } from '../components/ui/BoutonActualiser';
 import { userService, type CreateUserPayload } from '../services/userService';
 import { ApiError } from '../services/ApiError';
 import { useAuth } from '../hooks/useAuth';
@@ -43,6 +44,26 @@ function getRoleLabel(role: Role) {
     case 'manager': return 'Responsable';
     default: return 'Membre';
   }
+}
+
+/**
+ * AUD-002, F7 : verrou par identifiant pour les actions en cours. La référence bloque un second
+ * clic avant même le rendu suivant ; l'état (enCours) sert à l'affichage (entrée désactivée).
+ */
+function useVerrouParId() {
+  const verrous = useRef<Set<string>>(new Set());
+  const [enCours, setEnCours] = useState<ReadonlySet<string>>(new Set());
+  const prendre = useCallback((id: string) => {
+    if (verrous.current.has(id)) return false;
+    verrous.current.add(id);
+    setEnCours(new Set(verrous.current));
+    return true;
+  }, []);
+  const liberer = useCallback((id: string) => {
+    verrous.current.delete(id);
+    setEnCours(new Set(verrous.current));
+  }, []);
+  return { enCours, prendre, liberer };
 }
 
 export function UsersPage() {
@@ -114,10 +135,19 @@ export function UsersPage() {
     setUsers((prev) => [cree, ...prev]);
   };
 
-  const handleUpdate = async (data: Pick<User, 'name' | 'email' | 'role'>) => {
+  // Seuls les champs modifiés sont reçus du formulaire (le rôle seulement s'il a changé).
+  const handleUpdate = async (data: UserUpdatePayload) => {
     if (!editTarget) return;
     const modifie = await userService.update(editTarget.id, data);
     setUsers((prev) => prev.map((u) => (u.id === modifie.id ? modifie : u)));
+  };
+
+  // Conflit 409 : l'utilisateur est relu ; le formulaire garde la saisie jusqu'au clic « Recharger ».
+  const rechargerUtilisateur = async () => {
+    if (!editTarget) return;
+    const actuel = await userService.getById(editTarget.id);
+    setUsers((prev) => prev.map((u) => (u.id === actuel.id ? actuel : u)));
+    setEditTarget(actuel);
   };
 
   // Actions d'administration ; son propre compte ne peut être ni désactivé ni supprimé (règle du backend).
@@ -130,14 +160,84 @@ export function UsersPage() {
     };
   };
 
+  // AUD-002, F7 : comptes dont l'activation ou la désactivation est en cours.
+  const { enCours: activationsEnCours, prendre: prendreActivation, liberer: libererActivation } = useVerrouParId();
+
+  const remplacerUtilisateur = (actuel: User) =>
+    setUsers((prev) => prev.map((u) => (u.id === actuel.id ? actuel : u)));
+
+  // Erreurs d'activation : le message du backend reste affiché ; relecture seulement si l'état
+  // réel est utile (409) ou incertain (réseau). 403 : aucune relecture (droits perdus).
+  const traiterEchecActivation = async (id: string, err: unknown) => {
+    const message = err instanceof ApiError ? err.message : 'Modification impossible.';
+    const statut = err instanceof ApiError ? err.status : 0;
+    if (statut === 404) {
+      setUsers((prev) => prev.filter((u) => u.id !== id));
+      setError(message);
+      return;
+    }
+    if (statut === 409 || statut === 0) {
+      setError(message);
+      try {
+        remplacerUtilisateur(await userService.getById(id));
+      } catch {
+        if (statut === 0) setError(`${message} État du compte incertain : actualisez la page.`);
+        /* 409 : le message initial reste affiché, la ligne garde son état. */
+      }
+      return;
+    }
+    setError(message);
+  };
+
+  // La valeur cible est fixée au clic d'après l'état affiché (le backend applique une valeur
+  // absolue) ; l'état local n'est jamais inversé : il vient de la relecture du serveur.
   const handleToggleActive = async (user: User) => {
+    if (!prendreActivation(user.id)) return;
+    const cible = !user.isActive;
     setError(null);
     try {
-      if (user.isActive) await userService.deactivate(user.id);
-      else await userService.activate(user.id);
-      setUsers((prev) => prev.map((u) => (u.id === user.id ? { ...u, isActive: !u.isActive } : u)));
+      try {
+        if (cible) await userService.activate(user.id);
+        else await userService.deactivate(user.id);
+      } catch (err) {
+        await traiterEchecActivation(user.id, err);
+        return;
+      }
+      try {
+        remplacerUtilisateur(await userService.getById(user.id));
+      } catch {
+        // Relecture impossible : la valeur demandée a été confirmée par le 204 du serveur.
+        setUsers((prev) => prev.map((u) => (u.id === user.id ? { ...u, isActive: cible } : u)));
+      }
+    } finally {
+      libererActivation(user.id);
+    }
+  };
+
+  // AUD-002, F9 : après un 404, le compte a disparu (retiré de la liste) ; après un 409, il est
+  // relu une fois. Le message d'erreur déjà affiché n'est jamais remplacé.
+  const relireUtilisateurApresEchec = async (id: string, err: unknown) => {
+    const statut = err instanceof ApiError ? err.status : undefined;
+    const retirer = () => setUsers((prev) => prev.filter((u) => u.id !== id));
+    if (statut === 404) {
+      retirer();
+      return;
+    }
+    if (statut !== 409) return;
+    try {
+      remplacerUtilisateur(await userService.getById(id));
+    } catch (relecture) {
+      if (relecture instanceof ApiError && relecture.status === 404) retirer();
+    }
+  };
+
+  // AUD-002, F9 : actualisation manuelle ; ni le formulaire ouvert ni sa cible ne sont modifiés.
+  const actualiser = async () => {
+    try {
+      setUsers(await userService.listAll());
+      setError(null);
     } catch (err) {
-      setError(err instanceof ApiError ? err.message : 'Modification impossible.');
+      setError(err instanceof ApiError ? err.message : 'Actualisation impossible.');
     }
   };
 
@@ -149,6 +249,7 @@ export function UsersPage() {
       setUsers((prev) => prev.filter((u) => u.id !== deleteTarget.id));
     } catch (err) {
       setError(err instanceof ApiError ? err.message : 'Suppression impossible.');
+      await relireUtilisateurApresEchec(deleteTarget.id, err);
     } finally {
       setIsDeleting(false);
       setDeleteTarget(null);
@@ -160,7 +261,14 @@ export function UsersPage() {
       <PageHeader
         title="Utilisateurs"
         description="Gérez les membres de votre organisation."
-        actions={canManageUsers && <Button leftIcon={<Plus className="h-4 w-4" />} onClick={() => setIsCreateOpen(true)}>Nouvel utilisateur</Button>}
+        actions={
+          canListUsers && (
+            <>
+              <BoutonActualiser onActualiser={actualiser} />
+              {canManageUsers && <Button leftIcon={<Plus className="h-4 w-4" />} onClick={() => setIsCreateOpen(true)}>Nouvel utilisateur</Button>}
+            </>
+          )
+        }
       />
 
       {!canListUsers && (
@@ -240,8 +348,11 @@ export function UsersPage() {
                             actionsPour(user).onEdit && { label: 'Modifier', icon: <Edit className="h-4 w-4" />, onClick: () => setEditTarget(user) },
                             canManageUsers && { label: 'Historique', icon: <History className="h-4 w-4" />, onClick: () => setHistoryTarget(user) },
                             actionsPour(user).onToggleActive && {
-                              label: user.isActive ? 'Désactiver' : 'Activer',
+                              label: activationsEnCours.has(user.id)
+                                ? user.isActive ? 'Désactivation…' : 'Activation…'
+                                : user.isActive ? 'Désactiver' : 'Activer',
                               icon: user.isActive ? <UserX className="h-4 w-4" /> : <UserCheck className="h-4 w-4" />,
+                              disabled: activationsEnCours.has(user.id),
                               onClick: () => handleToggleActive(user),
                             },
                             actionsPour(user).onDelete && { label: 'Supprimer', icon: <Trash2 className="h-4 w-4" />, variant: 'danger', onClick: () => setDeleteTarget(user) },
@@ -257,7 +368,12 @@ export function UsersPage() {
         ) : (
           <div className="grid gap-4 md:grid-cols-2 lg:grid-cols-3">
             {filtered.map((user) => (
-              <UserCard key={user.id} user={user} {...actionsPour(user)} />
+              <UserCard
+                key={user.id}
+                user={user}
+                {...actionsPour(user)}
+                activationEnCours={activationsEnCours.has(user.id)}
+              />
             ))}
           </div>
         )}
@@ -289,6 +405,7 @@ export function UsersPage() {
           onClose={() => setEditTarget(null)}
           onCreate={() => undefined}
           onUpdate={handleUpdate}
+          onConflit={rechargerUtilisateur}
         />
       )}
       <ConfirmDialog isOpen={!!deleteTarget} onClose={() => setDeleteTarget(null)} onConfirm={handleDeleteConfirm} title="Supprimer l'utilisateur ?" description={`L'utilisateur "${deleteTarget?.name}" sera définitivement supprimé.`} confirmLabel="Supprimer" isLoading={isDeleting} />

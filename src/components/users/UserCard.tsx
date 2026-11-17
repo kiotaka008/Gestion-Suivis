@@ -42,9 +42,11 @@ export interface UserCardProps {
   onDelete?: (user: User) => void;
   onView?: (user: User) => void;
   onToggleActive?: (user: User) => void;
+  /** Activation ou désactivation en cours : l'entrée du menu est désactivée. */
+  activationEnCours?: boolean;
 }
 
-export function UserCard({ user, onEdit, onDelete, onView, onToggleActive }: UserCardProps) {
+export function UserCard({ user, onEdit, onDelete, onView, onToggleActive, activationEnCours = false }: UserCardProps) {
   return (
     <Card className="group transition-shadow hover:shadow-md">
       <CardHeader className="pb-3">
@@ -80,8 +82,11 @@ export function UserCard({ user, onEdit, onDelete, onView, onToggleActive }: Use
                 onClick: () => onEdit(user),
               },
               onToggleActive && {
-                label: user.isActive ? 'Désactiver' : 'Activer',
+                label: activationEnCours
+                  ? user.isActive ? 'Désactivation…' : 'Activation…'
+                  : user.isActive ? 'Désactiver' : 'Activer',
                 icon: user.isActive ? <UserX className="h-4 w-4" /> : <UserCheck className="h-4 w-4" />,
+                disabled: activationEnCours,
                 onClick: () => onToggleActive(user),
               },
               onDelete && {

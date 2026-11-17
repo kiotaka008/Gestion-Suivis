@@ -22,6 +22,7 @@ import { Card, CardContent, CardHeader, CardTitle } from '../components/ui/Card'
 import { EmptyState } from '../components/ui/EmptyState';
 import { ConfirmDialog } from '../components/ui/ConfirmDialog';
 import { Alert } from '../components/ui/Alert';
+import { BoutonActualiser } from '../components/ui/BoutonActualiser';
 import { Spinner } from '../components/ui/Spinner';
 import { CreateActivityModal } from '../components/activities/CreateActivityModal';
 import { activityService } from '../services/activityService';
@@ -157,14 +158,72 @@ export function ActivityDetailPage() {
 
   // Projet terminé ou archivé : ses activités sont en lecture seule (le backend refuse avec 409).
   const projetClos = project?.status === 'completed' || project?.status === 'archived';
-  const peutGerer = !projetClos && permissions.canManageActivity(project?.ownerId);
-  const peutSuivre = !projetClos && permissions.canTrackActivity(activity, project?.ownerId);
+  // Droits propres de l'utilisateur, indépendamment de la clôture du projet (AUD-002, F6).
+  const droitGestion = permissions.canManageActivity(project?.ownerId);
+  const droitSuivi = permissions.canTrackActivity(activity, project?.ownerId);
+  const peutGerer = !projetClos && droitGestion;
+  const peutSuivre = !projetClos && droitSuivi;
+  // AUD-002, F6 : un formulaire déjà ouvert reste affiché si le projet est clôturé entre-temps,
+  // verrouillé (lecture seule). Une perte de droits le ferme, comme avant. Le bouton d'ouverture
+  // reste réservé à peutSuivre : un projet déjà clos n'ouvre jamais de formulaire (AUD-012).
+  const formulaireVisible = isEditOpen && droitSuivi;
+  if (isEditOpen && !formulaireVisible) {
+    // Formulaire retiré (perte de droits) : il ne doit jamais réapparaître tout seul plus tard.
+    setIsEditOpen(false);
+  }
+  const verrouEdition = projetClos
+    ? `${project?.status === 'archived' ? 'Ce projet est archivé' : 'Ce projet est terminé'} : ses activités sont en lecture seule.`
+    : undefined;
   const statut = STATUTS[activity.status];
   const priorite = PRIORITES[activity.priority];
 
   // Les erreurs remontent jusqu'au formulaire, qui affiche le message du backend.
   const handleUpdate = async (data: Partial<Activity>) => {
     setActivity(await activityService.update(activity.id, data));
+  };
+
+  // Conflit 409 : l'activité et son projet (statut, clôture) sont relus ; le formulaire garde
+  // la saisie jusqu'au clic « Recharger ». Si le projet s'avère clos, la lecture seule (AUD-012)
+  // s'applique : le formulaire reste affiché, verrouillé, sans enregistrement possible (F6).
+  const rechargerActivite = async () => {
+    const actuelle = await activityService.getById(activity.id);
+    setActivity(actuelle);
+    setProject(await projectService.getById(actuelle.projectId));
+  };
+
+  // AUD-002, F9 : relit l'activité puis son projet. Activité disparue (404) : « introuvable »
+  // avec le message. Projet non visible : la version connue est gardée. Une clôture découverte
+  // ici applique AUD-012 (actions masquées) et verrouille un formulaire déjà ouvert (F6).
+  // Renvoie false si l'activité a disparu.
+  const relireActiviteEtProjet = async (messageSiDisparue: string): Promise<boolean> => {
+    let actuelle: Activity;
+    try {
+      actuelle = await activityService.getById(activity.id);
+    } catch (relecture) {
+      if (relecture instanceof ApiError && relecture.status === 404) {
+        setError(messageSiDisparue);
+        setActivity(null);
+        return false;
+      }
+      throw relecture;
+    }
+    setActivity(actuelle);
+    try {
+      setProject(await projectService.getById(actuelle.projectId));
+    } catch {
+      /* Projet non visible : la version connue est gardée. */
+    }
+    return true;
+  };
+
+  // AUD-002, F9 : actualisation manuelle ; le formulaire ouvert garde sa saisie.
+  const actualiser = async () => {
+    try {
+      const trouvee = await relireActiviteEtProjet("L'activité n'existe plus ou ne vous est plus accessible.");
+      if (trouvee) setError(null);
+    } catch (err) {
+      setError(err instanceof ApiError ? err.message : 'Actualisation impossible.');
+    }
   };
 
   const handleDelete = async () => {
@@ -175,7 +234,18 @@ export function ActivityDetailPage() {
       navigate(ROUTES.ACTIVITIES);
     } catch (err) {
       setDeleteOpen(false);
-      setError(err instanceof ApiError ? err.message : 'Suppression impossible.');
+      const message = err instanceof ApiError ? err.message : 'Suppression impossible.';
+      setError(message);
+      // AUD-002, F9 : 404, l'activité a disparu ; 409, relue une fois (message conservé).
+      if (err instanceof ApiError && err.status === 404) {
+        setActivity(null);
+      } else if (err instanceof ApiError && err.status === 409) {
+        try {
+          await relireActiviteEtProjet(message);
+        } catch {
+          /* Relecture impossible : le message initial reste affiché. */
+        }
+      }
     } finally {
       setIsDeleting(false);
     }
@@ -218,6 +288,7 @@ export function ActivityDetailPage() {
         </div>
 
         <div className="flex flex-wrap items-center gap-2">
+          <BoutonActualiser onActualiser={actualiser} />
           {peutSuivre && (
             <Button variant="outline" leftIcon={<Edit className="h-4 w-4" />} onClick={() => setIsEditOpen(true)}>
               {peutGerer ? 'Modifier' : "Mettre à jour l'avancement"}
@@ -337,16 +408,19 @@ export function ActivityDetailPage() {
         </CardContent>
       </Card>
 
-      {isEditOpen && peutSuivre && (
+      {formulaireVisible && (
         <CreateActivityModal
           key={activity.id}
           isOpen
           activity={activity}
-          trackOnly={!peutGerer}
+          // Mode fixé par les droits seuls : une clôture ne fait pas basculer le formulaire en suivi seul.
+          trackOnly={!droitGestion}
+          verrou={verrouEdition}
           projects={project ? [project] : []}
           assignees={users}
           onClose={() => setIsEditOpen(false)}
           onCreate={handleUpdate}
+          onConflit={rechargerActivite}
         />
       )}
 

@@ -8,6 +8,10 @@ import { Lock, Mail, User as UserIcon } from 'lucide-react';
 import type { Role, User } from '../../types/models';
 import type { CreateUserPayload } from '../../services/userService';
 import { ApiError } from '../../services/ApiError';
+import { champsModifies, normaliser } from '../../utils/modifications';
+
+/** Champs modifiables d'un utilisateur : seuls ceux réellement modifiés sont envoyés. */
+export type UserUpdatePayload = Partial<Pick<User, 'name' | 'email' | 'role'>>;
 
 export interface CreateUserModalProps {
   isOpen: boolean;
@@ -15,8 +19,16 @@ export interface CreateUserModalProps {
   onCreate: (data: CreateUserPayload) => Promise<void> | void;
   /** Utilisateur à modifier (nom, email, rôle) ; le parent fournit une `key` par utilisateur. */
   user?: User;
-  /** Enregistrement d'une modification (mode édition). */
-  onUpdate?: (data: Pick<User, 'name' | 'email' | 'role'>) => Promise<void> | void;
+  /**
+   * Enregistrement d'une modification (mode édition) : ne contient que les champs modifiés.
+   * Le rôle n'y figure que s'il a été explicitement changé (AUD-002, F2).
+   */
+  onUpdate?: (data: UserUpdatePayload) => Promise<void> | void;
+  /**
+   * Conflit 409 en modification : le parent relit l'utilisateur et met à jour `user`.
+   * La saisie n'est jamais remplacée automatiquement (bouton « Recharger les valeurs actuelles »).
+   */
+  onConflit?: () => Promise<void>;
 }
 
 interface FormState {
@@ -30,17 +42,31 @@ function etatInitial(user?: User): FormState {
   return { name: user?.name ?? '', email: user?.email ?? '', role: user?.role ?? 'member', password: '' };
 }
 
-export function CreateUserModal({ isOpen, onClose, onCreate, user, onUpdate }: CreateUserModalProps) {
+export function CreateUserModal({ isOpen, onClose, onCreate, user, onUpdate, onConflit }: CreateUserModalProps) {
   const isEdit = !!user;
   const [form, setForm] = useState<FormState>(() => etatInitial(user));
+  // Valeurs lues à l'ouverture : la comparaison se fait toujours avec elles, jamais avec `user`,
+  // qui peut être relu entre-temps (conflit 409).
+  const [reference, setReference] = useState<FormState>(() => etatInitial(user));
   const [isSubmitting, setIsSubmitting] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [conflit, setConflit] = useState<'aucun' | 'rechargement' | 'pret' | 'echec'>('aucun');
 
   const handleClose = () => {
     if (isSubmitting) return;
     setForm(etatInitial(user));
+    setReference(etatInitial(user));
     setError(null);
+    setConflit('aucun');
     onClose();
+  };
+
+  /** Remplace la saisie par les valeurs actuelles, uniquement sur demande de l'utilisateur. */
+  const rechargerValeursActuelles = () => {
+    setForm(etatInitial(user));
+    setReference(etatInitial(user));
+    setError(null);
+    setConflit('aucun');
   };
 
   const handleSubmit = async (e: FormEvent<HTMLFormElement>) => {
@@ -60,10 +86,27 @@ export function CreateUserModal({ isOpen, onClose, onCreate, user, onUpdate }: C
       return;
     }
 
+    // Modification : seuls les champs réellement modifiés sont envoyés (le rôle compris).
+    let donnees: UserUpdatePayload = {};
+    if (isEdit) {
+      const modifies = champsModifies(
+        { name: reference.name, email: reference.email, role: reference.role },
+        { name: form.name, email: form.email, role: form.role },
+        { name: normaliser.texte, email: normaliser.email }
+      );
+      if (modifies.length === 0) {
+        handleClose();
+        return;
+      }
+      if (modifies.includes('name')) donnees = { ...donnees, name: form.name.trim() };
+      if (modifies.includes('email')) donnees = { ...donnees, email: form.email.trim().toLowerCase() };
+      if (modifies.includes('role')) donnees = { ...donnees, role: form.role };
+    }
+
     setIsSubmitting(true);
     try {
       if (isEdit) {
-        await onUpdate?.({ name: form.name.trim(), email: form.email.trim().toLowerCase(), role: form.role });
+        await onUpdate?.(donnees);
       } else {
         await onCreate({
           name: form.name.trim(),
@@ -74,6 +117,7 @@ export function CreateUserModal({ isOpen, onClose, onCreate, user, onUpdate }: C
         });
         setForm(etatInitial());
       }
+      setConflit('aucun');
       onClose();
     } catch (err) {
       setError(
@@ -83,6 +127,16 @@ export function CreateUserModal({ isOpen, onClose, onCreate, user, onUpdate }: C
           ? "Impossible de modifier l'utilisateur. Veuillez réessayer."
           : "Impossible de créer l'utilisateur. Veuillez réessayer."
       );
+      // Conflit 409 : la saisie est conservée ; le parent relit l'utilisateur.
+      if (isEdit && err instanceof ApiError && err.status === 409 && onConflit) {
+        setConflit('rechargement');
+        try {
+          await onConflit();
+          setConflit('pret');
+        } catch {
+          setConflit('echec');
+        }
+      }
     } finally {
       setIsSubmitting(false);
     }
@@ -108,6 +162,18 @@ export function CreateUserModal({ isOpen, onClose, onCreate, user, onUpdate }: C
       {error && (
         <Alert variant="danger" className="mb-4">
           {error}
+        </Alert>
+      )}
+
+      {conflit !== 'aucun' && (
+        <Alert variant="warning" className="mb-4">
+          <p>Les données ont pu être modifiées entre-temps. Votre saisie est conservée.</p>
+          {conflit === 'echec' && <p className="mt-1">Impossible de relire les valeurs actuelles.</p>}
+          {conflit === 'pret' && (
+            <Button type="button" size="sm" variant="outline" className="mt-2" onClick={rechargerValeursActuelles}>
+              Recharger les valeurs actuelles
+            </Button>
+          )}
         </Alert>
       )}
 

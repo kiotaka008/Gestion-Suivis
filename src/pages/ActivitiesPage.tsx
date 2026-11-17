@@ -22,6 +22,7 @@ import { ActivityCard } from '../components/activities/ActivityCard';
 import { CreateActivityModal } from '../components/activities/CreateActivityModal';
 import type { Activity, ActivityStatus, Priority, Project, User } from '../types/models';
 import { Alert } from '../components/ui/Alert';
+import { BoutonActualiser } from '../components/ui/BoutonActualiser';
 import { activityService } from '../services/activityService';
 import { projectService } from '../services/projectService';
 import { ApiError } from '../services/ApiError';
@@ -116,6 +117,12 @@ export function ActivitiesPage() {
   // Projet terminé ou archivé : ses activités sont en lecture seule (le backend refuse avec 409).
   const estClos = (p: Pick<Project, 'status'> | undefined) => p?.status === 'completed' || p?.status === 'archived';
   const activiteModifiable = (a: Activity) => !estClos(projects.find((p) => p.id === a.projectId));
+  // AUD-002, F6 : raison du verrouillage d'un formulaire déjà ouvert dont le projet a été clôturé.
+  const verrouEdition = (a: Activity) => {
+    const projet = projects.find((p) => p.id === a.projectId);
+    if (!estClos(projet)) return undefined;
+    return `${projet?.status === 'archived' ? 'Ce projet est archivé' : 'Ce projet est terminé'} : ses activités sont en lecture seule.`;
+  };
   // Projets sur lesquels l'utilisateur peut ajouter des activités.
   const projetsGeres = projects.filter((p) => permissions.canManageProject(p));
   const peutCreer = projetsGeres.some((p) => !estClos(p));
@@ -170,6 +177,62 @@ export function ActivitiesPage() {
     setActivities((prev) => prev.map((a) => (a.id === modifiee.id ? modifiee : a)));
   };
 
+  // Conflit 409 : l'activité et son projet (statut, clôture) sont relus ; le formulaire garde
+  // la saisie jusqu'au clic « Recharger ».
+  const rechargerActivite = async () => {
+    if (!editTarget) return;
+    const actuelle = await activityService.getById(editTarget.id);
+    setActivities((prev) => prev.map((a) => (a.id === actuelle.id ? actuelle : a)));
+    setEditTarget(actuelle);
+    const projet = await projectService.getById(actuelle.projectId);
+    setProjects((prev) => prev.map((p) => (p.id === projet.id ? projet : p)));
+  };
+
+  // AUD-002, F9 : après un 404, l'activité a disparu (retirée de la liste) ; après un 409, elle est
+  // relue une fois avec son projet (clôture : AUD-012 masque alors les actions). Le message
+  // d'erreur déjà affiché n'est jamais remplacé.
+  const relireActiviteApresEchec = async (id: string, err: unknown) => {
+    const statut = err instanceof ApiError ? err.status : undefined;
+    const retirer = () => setActivities((prev) => prev.filter((a) => a.id !== id));
+    if (statut === 404) {
+      retirer();
+      return;
+    }
+    if (statut !== 409) return;
+    let actuelle: Activity;
+    try {
+      actuelle = await activityService.getById(id);
+    } catch (relecture) {
+      if (relecture instanceof ApiError && relecture.status === 404) retirer();
+      return;
+    }
+    setActivities((prev) => prev.map((a) => (a.id === actuelle.id ? actuelle : a)));
+    try {
+      const projet = await projectService.getById(actuelle.projectId);
+      setProjects((prev) => prev.map((p) => (p.id === projet.id ? projet : p)));
+    } catch {
+      /* Projet non relu : la liste garde la version connue. */
+    }
+  };
+
+  // AUD-002, F9 : actualisation manuelle ; ni le formulaire ouvert ni sa cible ne sont modifiés
+  // (un projet découvert clôturé verrouille le formulaire ouvert, F6).
+  const actualiser = async () => {
+    try {
+      const [listeActivites, listeProjets, listeUtilisateurs] = await Promise.all([
+        activityService.listAll(),
+        projectService.listAll(),
+        canListUsers ? userService.listAll() : Promise.resolve<User[]>([]),
+      ]);
+      setActivities(listeActivites);
+      setProjects(listeProjets);
+      setUsers(listeUtilisateurs);
+      setError(null);
+    } catch (err) {
+      setError(err instanceof ApiError ? err.message : 'Actualisation impossible.');
+    }
+  };
+
   const handleDeleteConfirm = async () => {
     if (!deleteTarget) return;
     setIsDeleting(true);
@@ -178,6 +241,7 @@ export function ActivitiesPage() {
       setActivities((prev) => prev.filter((a) => a.id !== deleteTarget.id));
     } catch (err) {
       setError(err instanceof ApiError ? err.message : 'Suppression impossible.');
+      await relireActiviteApresEchec(deleteTarget.id, err);
     } finally {
       setIsDeleting(false);
       setDeleteTarget(null);
@@ -190,11 +254,14 @@ export function ActivitiesPage() {
         title="Activités"
         description="Toutes les activités de vos projets."
         actions={
-          peutCreer && (
-            <Button leftIcon={<Plus className="h-4 w-4" />} onClick={() => setIsCreateOpen(true)}>
-              Nouvelle activité
-            </Button>
-          )
+          <>
+            <BoutonActualiser onActualiser={actualiser} />
+            {peutCreer && (
+              <Button leftIcon={<Plus className="h-4 w-4" />} onClick={() => setIsCreateOpen(true)}>
+                Nouvelle activité
+              </Button>
+            )}
+          </>
         }
       />
 
@@ -303,8 +370,11 @@ export function ActivitiesPage() {
           isOpen
           activity={editTarget}
           trackOnly={!permissions.canManageActivity(proprietaireDuProjet(editTarget.projectId))}
+          // AUD-002, F6 : projet clôturé pendant la modification, formulaire verrouillé (lecture seule).
+          verrou={verrouEdition(editTarget)}
           onClose={() => setEditTarget(null)}
           onCreate={handleUpdate}
+          onConflit={rechargerActivite}
           projects={projects}
           assignees={users}
         />

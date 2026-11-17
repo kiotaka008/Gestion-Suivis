@@ -30,6 +30,30 @@ describe('Dropdown', () => {
     expect(screen.getAllByRole('menuitem').map((b) => b.textContent)).toEqual(['Voir', 'Supprimer']);
   });
 
+  // AUD-002, F7 : entrée désactivée pendant une requête en cours.
+  it('entrée désactivée : visible, non cliquable, menu laissé ouvert', async () => {
+    const user = userEvent.setup();
+    const onClick = vi.fn();
+    render(<Dropdown trigger={<button>Menu</button>} items={[{ label: 'Désactivation…', onClick, disabled: true }]} />);
+    await user.click(screen.getByText('Menu'));
+    const entree = screen.getByRole('menuitem', { name: 'Désactivation…' });
+    expect(entree).toBeDisabled();
+    await user.click(entree);
+    expect(onClick).not.toHaveBeenCalled();
+    expect(screen.getByRole('menu')).toBeInTheDocument();
+  });
+
+  it('entrée sans disabled : comportement inchangé', async () => {
+    const user = userEvent.setup();
+    const onClick = vi.fn();
+    render(<Dropdown trigger={<button>Menu</button>} items={[{ label: 'Activer', onClick }]} />);
+    await user.click(screen.getByText('Menu'));
+    expect(screen.getByRole('menuitem', { name: 'Activer' })).toBeEnabled();
+    await user.click(screen.getByRole('menuitem', { name: 'Activer' }));
+    expect(onClick).toHaveBeenCalledTimes(1);
+    expect(screen.queryByRole('menu')).not.toBeInTheDocument();
+  });
+
   it("n'affiche pas le bouton de menu sans aucune action", () => {
     render(<Dropdown trigger={<button>Menu</button>} items={[false, undefined]} />);
     expect(screen.queryByText('Menu')).not.toBeInTheDocument();
