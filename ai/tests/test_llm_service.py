@@ -4,10 +4,22 @@ from unittest.mock import AsyncMock, MagicMock, patch
 
 import httpx
 import pytest
-from groq import APIStatusError, omit
+from groq import APIConnectionError, APIStatusError, APITimeoutError, omit
 
-from app.core.exceptions import LLMError, LLMQuotaError, UnauthorizedError
+from app.core.exceptions import LLMError, LLMQuotaError, LLMTimeoutError
 from app.services.llm_service import LLMService, get_llm_service
+
+_URL_GROQ = "https://api.groq.com/openai/v1/chat/completions"
+
+
+def _creer_service() -> LLMService:
+    """Service avec une clé factice si aucune n'est configurée (ex. CI sans .env)."""
+    service = LLMService()
+    if not service._settings.groq_api_key:
+        service._settings = service._settings.model_copy(
+            update={"groq_api_key": "cle-de-test-factice"}
+        )
+    return service
 
 
 def _reponse_groq(contenu: str = "Reponse simulee") -> MagicMock:
@@ -28,8 +40,12 @@ def _arguments(create: AsyncMock) -> Mapping[str, Any]:
 
 
 def _erreur_groq(statut: int) -> APIStatusError:
-    requete = httpx.Request("POST", "https://api.groq.com/openai/v1/chat/completions")
+    requete = httpx.Request("POST", _URL_GROQ)
     return APIStatusError("erreur", response=httpx.Response(statut, request=requete), body=None)
+
+
+def _requete() -> httpx.Request:
+    return httpx.Request("POST", _URL_GROQ)
 
 
 class TestLLMServiceSingleton:
@@ -42,7 +58,7 @@ class TestLLMServiceSingleton:
 class TestLLMServiceComplete:
     @pytest.mark.asyncio
     async def test_complete_success(self) -> None:
-        service = LLMService()
+        service = _creer_service()
         with patch.object(
             service.client.chat.completions, "create", new_callable=AsyncMock, return_value=_reponse_groq()
         ) as create:
@@ -62,7 +78,7 @@ class TestLLMServiceComplete:
 
     @pytest.mark.asyncio
     async def test_system_prompt_first_then_history_in_order(self) -> None:
-        service = LLMService()
+        service = _creer_service()
         historique = [
             {"role": "user", "content": "Bonjour"},
             {"role": "assistant", "content": "Salut"},
@@ -80,7 +96,7 @@ class TestLLMServiceComplete:
 
     @pytest.mark.asyncio
     async def test_json_response_format_and_parameters_forwarded(self) -> None:
-        service = LLMService()
+        service = _creer_service()
         with patch.object(
             service.client.chat.completions, "create", new_callable=AsyncMock, return_value=_reponse_groq("{}")
         ) as create:
@@ -99,7 +115,7 @@ class TestLLMServiceComplete:
 
     @pytest.mark.asyncio
     async def test_empty_content_becomes_empty_string(self) -> None:
-        service = LLMService()
+        service = _creer_service()
         reponse = _reponse_groq()
         reponse.choices[0].message.content = None
         with patch.object(service.client.chat.completions, "create", new_callable=AsyncMock, return_value=reponse):
@@ -107,17 +123,25 @@ class TestLLMServiceComplete:
         assert result["content"] == ""
 
     @pytest.mark.asyncio
-    async def test_invalid_key_raises_unauthorized(self) -> None:
-        service = LLMService()
+    @pytest.mark.parametrize("statut", [401, 403, 404])
+    async def test_refused_key_or_unknown_model_raises_generic_llm_error(self, statut: int) -> None:
+        """Clé refusée ou modèle introuvable : problème de configuration, pas d'authentification
+        de l'utilisateur. L'erreur est générique et ne révèle aucun détail au client."""
+        service = _creer_service()
         with patch.object(
-            service.client.chat.completions, "create", new_callable=AsyncMock, side_effect=_erreur_groq(401)
+            service.client.chat.completions, "create", new_callable=AsyncMock, side_effect=_erreur_groq(statut)
         ):
-            with pytest.raises(UnauthorizedError):
+            with pytest.raises(LLMError) as exc_info:
                 await service.complete(system_prompt="Test", messages=[])
+
+        message = str(exc_info.value).lower()
+        assert "groq" not in message
+        assert "clé" not in message
+        assert "modèle" not in message
 
     @pytest.mark.asyncio
     async def test_rate_limit_raises_quota_error(self) -> None:
-        service = LLMService()
+        service = _creer_service()
         with patch.object(
             service.client.chat.completions, "create", new_callable=AsyncMock, side_effect=_erreur_groq(429)
         ):
@@ -126,7 +150,7 @@ class TestLLMServiceComplete:
 
     @pytest.mark.asyncio
     async def test_other_api_error_raises_llm_error(self) -> None:
-        service = LLMService()
+        service = _creer_service()
         with patch.object(
             service.client.chat.completions, "create", new_callable=AsyncMock, side_effect=_erreur_groq(500)
         ):
@@ -134,19 +158,44 @@ class TestLLMServiceComplete:
                 await service.complete(system_prompt="Test", messages=[])
 
     @pytest.mark.asyncio
-    async def test_unexpected_error_raises_llm_error(self) -> None:
-        service = LLMService()
+    async def test_timeout_raises_llm_timeout_error(self) -> None:
+        service = _creer_service()
         with patch.object(
-            service.client.chat.completions, "create", new_callable=AsyncMock, side_effect=RuntimeError("boom")
+            service.client.chat.completions,
+            "create",
+            new_callable=AsyncMock,
+            side_effect=APITimeoutError(request=_requete()),
+        ):
+            with pytest.raises(LLMTimeoutError):
+                await service.complete(system_prompt="Test", messages=[])
+
+    @pytest.mark.asyncio
+    async def test_connection_error_raises_llm_error(self) -> None:
+        service = _creer_service()
+        with patch.object(
+            service.client.chat.completions,
+            "create",
+            new_callable=AsyncMock,
+            side_effect=APIConnectionError(request=_requete()),
         ):
             with pytest.raises(LLMError):
                 await service.complete(system_prompt="Test", messages=[])
+
+    @pytest.mark.asyncio
+    async def test_unexpected_error_raises_llm_error(self) -> None:
+        service = _creer_service()
+        with patch.object(
+            service.client.chat.completions, "create", new_callable=AsyncMock, side_effect=RuntimeError("boom")
+        ):
+            with pytest.raises(LLMError) as exc_info:
+                await service.complete(system_prompt="Test", messages=[])
+        assert "boom" not in str(exc_info.value)
 
 
 class TestLLMServiceStream:
     @pytest.mark.asyncio
     async def test_stream_yields_non_empty_deltas(self) -> None:
-        service = LLMService()
+        service = _creer_service()
 
         def morceau(texte: str | None) -> MagicMock:
             m = MagicMock()
@@ -162,3 +211,13 @@ class TestLLMServiceStream:
             morceaux = [m async for m in service.stream_complete(system_prompt="Test", messages=[])]
 
         assert morceaux == ["Bon", "jour"]
+
+    @pytest.mark.asyncio
+    async def test_stream_quota_error_is_translated(self) -> None:
+        service = _creer_service()
+        with patch.object(
+            service.client.chat.completions, "create", new_callable=AsyncMock, side_effect=_erreur_groq(429)
+        ):
+            with pytest.raises(LLMQuotaError):
+                async for _ in service.stream_complete(system_prompt="Test", messages=[]):
+                    pass

@@ -1,22 +1,20 @@
-from typing import Any, AsyncIterator, cast
+﻿from typing import Any, AsyncIterator, cast
 
-from groq import AsyncGroq, omit
+from groq import APIConnectionError, APIStatusError, APITimeoutError, AsyncGroq, omit
 from groq import APIError as GroqAPIError
 from groq.types.chat import ChatCompletionMessageParam
 from groq.types.chat.completion_create_params import ResponseFormat
 
 from app.config import get_settings
-from app.core.exceptions import (
-    LLMError,
-    LLMQuotaError,
-    LLMTimeoutError,
-    UnauthorizedError,
-)
+from app.core.exceptions import LLMError, LLMQuotaError, LLMTimeoutError
 from app.models.schemas import AITaskType, TokenUsage
 from app.services.mock_llm import MODELE_SIMULE, USAGE_SIMULE, contenu_simule, tache_depuis_prompt
 from app.utils.logger import get_logger
 
 logger = get_logger("llm_service")
+
+TIMEOUT_SECONDES = 30.0
+MAX_TENTATIVES = 2
 
 
 class LLMService:
@@ -27,8 +25,45 @@ class LLMService:
     @property
     def client(self) -> AsyncGroq:
         if self._client is None:
-            self._client = AsyncGroq(api_key=self._settings.groq_api_key)
+            if not self._settings.groq_api_key:
+                logger.error("GROQ_API_KEY absente : service LLM non configuré.")
+                raise LLMError("Le service IA est momentanément indisponible.")
+            self._client = AsyncGroq(
+                api_key=self._settings.groq_api_key,
+                timeout=TIMEOUT_SECONDES,
+                max_retries=MAX_TENTATIVES,
+            )
         return self._client
+
+    @staticmethod
+    def _traduire_erreur(e: Exception) -> Exception:
+        """
+        Convertit une erreur Groq en erreur du service.
+        Le détail technique va dans les logs, jamais vers le client.
+        """
+        if isinstance(e, APITimeoutError):
+            logger.error("Groq : délai dépassé.")
+            return LLMTimeoutError("Le service IA a mis trop de temps à répondre.")
+        if isinstance(e, APIConnectionError):
+            logger.error(f"Groq : connexion impossible — {e}")
+            return LLMError("Le service IA est momentanément indisponible.")
+        if isinstance(e, APIStatusError):
+            status = e.status_code
+            if status == 429:
+                logger.warning("Groq : quota ou limite de débit atteint.")
+                return LLMQuotaError("Le service IA est très sollicité. Veuillez réessayer.")
+            if status in (401, 403):
+                logger.error("Groq : clé API refusée (invalide, révoquée ou sans accès).")
+            elif status == 404:
+                logger.error("Groq : modèle introuvable (vérifier GROQ_MODEL).")
+            else:
+                logger.error(f"Groq : erreur HTTP {status} — {e}")
+            return LLMError("Le service IA est momentanément indisponible.")
+        if isinstance(e, GroqAPIError):
+            logger.error(f"Groq : erreur API — {e}")
+            return LLMError("Le service IA est momentanément indisponible.")
+        logger.error(f"Erreur inattendue LLM : {type(e).__name__} — {e}")
+        return LLMError("Erreur inattendue du service IA.")
 
     async def complete(
         self,
@@ -57,7 +92,9 @@ class LLMService:
                 temperature=temperature if temperature is not None else 0.7,
                 max_tokens=max_tokens or 2048,
                 # Sans format demandé, le paramètre n'est pas envoyé (et non « null »).
-                response_format=cast(ResponseFormat, response_format) if response_format is not None else omit,
+                response_format=(
+                    cast(ResponseFormat, response_format) if response_format is not None else omit
+                ),
             )
 
             content = response.choices[0].message.content or ""
@@ -71,16 +108,10 @@ class LLMService:
 
             return {"content": content, "usage": usage, "model": settings.groq_model}
 
-        except GroqAPIError as e:
-            status = getattr(e, "status_code", None) or 500
-            if status == 401:
-                raise UnauthorizedError("Clé API Groq invalide ou expirée.")
-            if status == 429:
-                raise LLMQuotaError("Quota Groq dépassé. Veuillez réessayer.")
-            raise LLMError(f"Erreur Groq : {str(e)}")
+        except LLMError:
+            raise
         except Exception as e:
-            logger.error(f"Erreur inattendue Groq : {type(e).__name__} — {e}")
-            raise LLMError("Erreur inattendue du service LLM.")
+            raise self._traduire_erreur(e) from e
 
     async def stream_complete(
         self,
@@ -116,9 +147,10 @@ class LLMService:
                 if chunk.choices and chunk.choices[0].delta.content:
                     yield chunk.choices[0].delta.content
 
+        except LLMError:
+            raise
         except Exception as e:
-            logger.error(f"Erreur streaming Groq : {type(e).__name__} — {e}")
-            raise LLMError("Erreur lors du streaming LLM.")
+            raise self._traduire_erreur(e) from e
 
     @staticmethod
     def _messages_groq(
@@ -132,6 +164,7 @@ class LLMService:
 
 
 _llm_service: LLMService | None = None
+
 
 def get_llm_service() -> LLMService:
     global _llm_service
