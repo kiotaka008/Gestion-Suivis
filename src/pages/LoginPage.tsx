@@ -224,9 +224,12 @@ export function LoginPage() {
                   checked={remember}
                   onChange={(e) => setRemember(e.target.checked)}
                 />
-                <a href="/forgot-password" className="text-sm font-medium text-indigo-600 hover:underline dark:text-indigo-400">
-                  Mot de passe oublié ?
-                </a>
+                <Link
+  to={ROUTES.FORGOT_PASSWORD}
+  className="text-sm font-medium text-indigo-600 hover:underline dark:text-indigo-400"
+>
+  Mot de passe oublié ?
+</Link>
               </div>
 
               <button

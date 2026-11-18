@@ -12,6 +12,7 @@ import {
 export const ROUTES = {
   LOGIN: '/login',
   REGISTER: '/register',
+  FORGOT_PASSWORD: '/forgot-password',
   DASHBOARD: '/',
   PROJECTS: '/projects',
   ACTIVITIES: '/activities',
