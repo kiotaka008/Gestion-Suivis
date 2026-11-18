@@ -1,4 +1,4 @@
-from datetime import datetime
+﻿from datetime import UTC, datetime
 from enum import Enum
 from typing import Literal
 
@@ -158,7 +158,7 @@ class ChatResponse(BaseModel):
     conversation_id: str | None = None
     usage: TokenUsage | None = None
     model: str
-    created_at: datetime = Field(default_factory=datetime.utcnow)
+    created_at: datetime = Field(default_factory=lambda: datetime.now(UTC))
 
 
 class SummarizeResponse(BaseModel):
@@ -167,7 +167,7 @@ class SummarizeResponse(BaseModel):
     key_points: list[str] = Field(default_factory=list)
     usage: TokenUsage | None = None
     model: str
-    created_at: datetime = Field(default_factory=datetime.utcnow)
+    created_at: datetime = Field(default_factory=lambda: datetime.now(UTC))
 
 
 class RiskItem(BaseModel):
@@ -185,7 +185,7 @@ class AnalyzeRisksResponse(BaseModel):
     summary: str
     usage: TokenUsage | None = None
     model: str
-    created_at: datetime = Field(default_factory=datetime.utcnow)
+    created_at: datetime = Field(default_factory=lambda: datetime.now(UTC))
 
 
 class GenerateReportResponse(BaseModel):
@@ -195,7 +195,7 @@ class GenerateReportResponse(BaseModel):
     sections: dict[str, str] = Field(default_factory=dict)
     usage: TokenUsage | None = None
     model: str
-    created_at: datetime = Field(default_factory=datetime.utcnow)
+    created_at: datetime = Field(default_factory=lambda: datetime.now(UTC))
 
 
 class ClassifyResponse(BaseModel):

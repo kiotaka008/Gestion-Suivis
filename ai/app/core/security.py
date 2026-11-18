@@ -1,3 +1,5 @@
+import secrets
+
 from fastapi import Header, HTTPException, status
 
 from app.config import get_settings
@@ -26,7 +28,11 @@ async def verify_internal_api_key(
             detail="Clé API interne manquante.",
         )
 
-    if x_internal_api_key != settings.internal_api_key:
+    # Comparaison à temps constant (encode : compare_digest refuse les str non ASCII).
+    if not secrets.compare_digest(
+        x_internal_api_key.encode("utf-8"),
+        settings.internal_api_key.encode("utf-8"),
+    ):
         logger.warning("Requête avec clé API interne invalide")
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED,
